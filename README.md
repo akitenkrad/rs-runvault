@@ -78,6 +78,7 @@ failure — the presence of the lock alone never means "still running".
 | `runvault sync --repo-id R --vault V` | copy the light half of every run into it |
 | `runvault query --vault V --refresh` | rebuild `index/*.parquet` from that repository |
 | `runvault query --vault V "SELECT …"` | ask a question across every repository at once |
+| `runvault report --obsidian --vault V -o runs.json` | summarize the index for the dashboard |
 
 ### Keeping the record off one machine
 

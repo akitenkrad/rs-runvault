@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 mod index;
+mod report;
 
 use clap::{Args, Parser, Subcommand};
 use runvault::gc::Outcome;
@@ -35,6 +36,8 @@ enum Command {
     Sync(SyncArgs),
     /// Rebuild the index, run SQL against it, or both.
     Query(QueryArgs),
+    /// Summarize the index for the Obsidian dashboard.
+    Report(ReportArgs),
 }
 
 #[derive(Args)]
@@ -138,6 +141,19 @@ struct QueryArgs {
 }
 
 #[derive(Args)]
+struct ReportArgs {
+    /// The aggregation repository whose index is summarized.
+    #[arg(long)]
+    vault: Option<PathBuf>,
+    /// Write the payload the Obsidian dashboard reads.
+    #[arg(long)]
+    obsidian: bool,
+    /// Where to write it. Defaults to standard output.
+    #[arg(long, short)]
+    out: Option<PathBuf>,
+}
+
+#[derive(Args)]
 struct GcArgs {
     /// Where the experiment directories live.
     #[arg(long, default_value = "results")]
@@ -156,6 +172,7 @@ fn main() -> ExitCode {
         Command::Legacy(args) => cmd_legacy(&args),
         Command::Sync(args) => cmd_sync(&args),
         Command::Query(args) => cmd_query(&args),
+        Command::Report(args) => cmd_report(&args),
     };
     match result {
         Ok(code) => code,
@@ -472,6 +489,36 @@ fn cmd_sync(args: &SyncArgs) -> Result<ExitCode> {
     } else {
         ExitCode::SUCCESS
     })
+}
+
+fn cmd_report(args: &ReportArgs) -> Result<ExitCode> {
+    if !args.obsidian {
+        eprintln!("runvault: いまのところ --obsidian だけが出力先です");
+        return Ok(ExitCode::FAILURE);
+    }
+    let vault = args.vault.clone().unwrap_or_else(default_vault);
+    let payload = report::build(&vault).map_err(runvault::Error::Spec)?;
+    let text = serde_json::to_string_pretty(&payload)?;
+
+    match &args.out {
+        // Written whole or not at all: the dashboard reads this file on a timer,
+        // and half of it parses as neither missing nor valid.
+        Some(path) => {
+            if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+                std::fs::create_dir_all(parent)?;
+            }
+            runvault::files::write_atomically(path, text.as_bytes())?;
+            eprintln!(
+                "{} 実験・{} run・{} 件の警告を {} に書きました",
+                payload["experiments"].as_array().map_or(0, Vec::len),
+                payload["runs"].as_array().map_or(0, Vec::len),
+                payload["warnings"].as_array().map_or(0, Vec::len),
+                path.display()
+            );
+        }
+        None => println!("{text}"),
+    }
+    Ok(ExitCode::SUCCESS)
 }
 
 fn cmd_query(args: &QueryArgs) -> Result<ExitCode> {

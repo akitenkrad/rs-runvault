@@ -46,7 +46,15 @@
         ],
         "properties": {
           "experiment": {
-            "$ref": "common.json#/$defs/slug"
+            "anyOf": [
+              {
+                "$ref": "common.json#/$defs/slug"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "legacy run が results 直下に置かれていると，どの実験のものか記録に無い．その場合の 1 まとまりが null (実データでは 237 件中 233 件がこれ)"
           },
           "repo_id": {
             "$ref": "common.json#/$defs/slug"
@@ -124,7 +132,15 @@
             ]
           },
           "experiment": {
-            "$ref": "common.json#/$defs/slug"
+            "anyOf": [
+              {
+                "$ref": "common.json#/$defs/slug"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "legacy では記録に無いことがある"
           },
           "subcommand": {
             "anyOf": [
@@ -141,8 +157,10 @@
             "enum": [
               "finished",
               "failed",
-              "unfinished"
-            ]
+              "unfinished",
+              null
+            ],
+            "description": "legacy run には status.json が無く，どう終わったかが記録に無い．unfinished は «status.json が無い正規の run» を意味するので，そこに混ぜず null にする"
           },
           "created_at": {
             "$ref": "common.json#/$defs/timestamp"
