@@ -94,4 +94,13 @@ stands. That matters only when publishing, which is not yet planned.
 
 ## License
 
-TBD.
+Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or
+[MIT license](LICENSE-MIT) at your option.
+
+Unless you explicitly state otherwise, any contribution intentionally submitted
+for inclusion in this crate by you, as defined in the Apache-2.0 license, shall
+be dual licensed as above, without any additional terms or conditions.
+
+The run directories under `crates/runvault/tests/fixtures/legacy/` are outputs of
+the author's own replication of Schelling (1971) and of a small opinion-dynamics
+model, trimmed to a few rows each. They are test data, not results.
