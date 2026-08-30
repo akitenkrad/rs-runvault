@@ -152,6 +152,7 @@ fn cmd_gc(args: &GcArgs) -> Result<ExitCode> {
     for entry in &reaped {
         let label = match entry.outcome {
             Outcome::Running => "running",
+            Outcome::Contested => "running (一度 stale と判定したが生きていた)",
             Outcome::Reaped => {
                 stale += 1;
                 if args.dry_run {

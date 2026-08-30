@@ -432,10 +432,22 @@ impl Run {
             parameters: options.parameters.clone(),
         };
 
-        files::write_json_atomically(&dir.join("config.json"), &envelope)?;
-        files::write_json_atomically(&dir.join("run.json"), &meta)?;
+        // From here the directory exists, so a failure must not leave something
+        // that has neither a status nor a lock: `gc` would see no lock and walk
+        // past it, and the half-written run would sit there for good.
+        let started = (|| -> Result<Heartbeat> {
+            files::write_json_atomically(&dir.join("config.json"), &envelope)?;
+            files::write_json_atomically(&dir.join("run.json"), &meta)?;
+            Heartbeat::start(&dir, LockRecord::for_this_process(now))
+        })();
 
-        let heartbeat = Heartbeat::start(&dir, LockRecord::for_this_process(now))?;
+        let heartbeat = match started {
+            Ok(heartbeat) => heartbeat,
+            Err(e) => {
+                record_failed_start(&dir, &run_uid, now, collision_index, &e);
+                return Err(e);
+            }
+        };
 
         Ok(Self {
             dir,
@@ -544,14 +556,27 @@ impl Run {
     }
 
     /// Ends the run as failed, with a reason.
+    ///
+    /// Tears down in the same order as [`Run::finish`]: the heartbeat stops and
+    /// the lock goes before `status.json` is written, so an explicit failure
+    /// never leaves the two together.
     pub fn fail(mut self, kind: impl Into<String>, message: impl Into<String>) -> Result<PathBuf> {
         let error = StatusError {
             kind: kind.into(),
             message: message.into(),
         };
+        self.release_lock()?;
         self.write_status(State::Failed, Some(error), None)?;
         self.finished = true;
         Ok(self.dir.clone())
+    }
+
+    /// Stops the heartbeat and removes the lock. Always before `status.json`.
+    fn release_lock(&mut self) -> Result<()> {
+        if let Some(mut beat) = self.heartbeat.take() {
+            beat.stop();
+        }
+        crate::lockfile::remove(&self.dir)
     }
 
     fn finish_inner(&mut self) -> Result<()> {
@@ -560,10 +585,7 @@ impl Run {
 
         // The lock goes before `status.json`: a completed run must never be found
         // with both, which is one of the invariants `verify` checks.
-        if let Some(mut beat) = self.heartbeat.take() {
-            beat.stop();
-        }
-        crate::lockfile::remove(&self.dir)?;
+        self.release_lock()?;
 
         match verify::shallow(&self.dir) {
             Ok(()) => {
@@ -700,10 +722,7 @@ impl Drop for Run {
         if self.finished {
             return;
         }
-        if let Some(mut beat) = self.heartbeat.take() {
-            beat.stop();
-        }
-        let _ = crate::lockfile::remove(&self.dir);
+        let _ = self.release_lock();
         let _ = self.write_status(
             State::Failed,
             Some(StatusError {
@@ -845,6 +864,37 @@ impl ReferenceEntry<'_> {
     }
 }
 
+/// Marks a run that could not finish starting, so it is not left in limbo.
+///
+/// Best effort: this runs on a path that is already failing, and a second
+/// failure here must not replace the error the caller needs to see.
+fn record_failed_start(
+    dir: &Path,
+    run_uid: &str,
+    started_at: DateTime<Local>,
+    collision_index: Option<u64>,
+    cause: &Error,
+) {
+    let _ = crate::lockfile::remove(dir);
+    let now = Local::now();
+    let status = RunStatus {
+        schema_version: SCHEMA_VERSION.into(),
+        run_uid: run_uid.to_string(),
+        state: State::Failed,
+        started_at: started_at.to_rfc3339(),
+        finished_at: now.to_rfc3339(),
+        duration_sec: (now - started_at).num_milliseconds().max(0) as f64 / 1000.0,
+        exit_code: None,
+        collision_index,
+        error: Some(StatusError {
+            kind: "start".into(),
+            message: format!("run の作成を完了できませんでした: {cause}"),
+        }),
+        counts: None,
+    };
+    let _ = files::write_json_atomically(&dir.join("status.json"), &status);
+}
+
 fn rng_of(options: &RunOptions, domain: &str) -> Option<crate::meta::Rng> {
     if options.master_seed.is_none() && options.replicate_index.is_none() && domain != "simulation"
     {
@@ -984,6 +1034,28 @@ mod tests {
             create_run_dir(&exp, "main", "20260830_101500", &cfg, &exec).unwrap();
         assert_eq!(slug, "main_20260830_101500_9f2c41ab_3b1d-3");
         assert_eq!(index, Some(3));
+    }
+
+    #[test]
+    fn a_start_that_fails_after_the_directory_exists_leaves_a_record() {
+        // Without this the directory has neither a status nor a lock, and `gc`
+        // walks straight past it: the half-written run stays for good.
+        let dir = tempfile::tempdir().unwrap();
+        record_failed_start(
+            dir.path(),
+            "01K3QZ8F7H9M2N4P6R8T0V2X4Z",
+            Local::now(),
+            Some(2),
+            &Error::spec("disk full"),
+        );
+        let status: RunStatus =
+            files::read_json(&dir.path().join("status.json")).expect("status was written");
+        assert_eq!(status.state, State::Failed);
+        assert_eq!(status.collision_index, Some(2));
+        let error = status.error.expect("a failed run states why");
+        assert_eq!(error.kind, "start");
+        assert!(error.message.contains("disk full"), "{}", error.message);
+        assert!(!dir.path().join(crate::lockfile::LOCK_FILE).exists());
     }
 
     #[test]

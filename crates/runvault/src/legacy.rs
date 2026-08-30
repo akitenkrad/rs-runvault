@@ -529,9 +529,20 @@ fn convert_wide(
                 continue;
             }
             if !seen.insert((name.clone(), step, step_unit.clone())) {
+                // The whole file is refused, not just the colliding columns. In
+                // a panel the columns that happen not to collide are per-series
+                // values that coincide (an all-zero mix, a flag equal across
+                // firms); emitting those as run-level numbers would state a fact
+                // the file does not make.
+                let keys = series_key_candidates(&header, &rows, axis.map(|(i, _, _)| i));
+                let hint = if keys.is_empty() {
+                    String::new()
+                } else {
+                    format!("．系列を分けているのは {} らしく，", keys.join(" / "))
+                };
                 return Ok(table(&format!(
-                    "行の間で主キーが重複します (最初の重複: name={name}, step={})．\
-                     系列を分ける列があるなら metrics.csv ではなく events.jsonl の形です",
+                    "行の間で主キーが重複します (最初の重複: name={name}, step={}){hint}\
+                     これは metrics.csv ではなく events.jsonl ( unit_id つき) の形です",
                     step.map(|s| s.to_string()).unwrap_or_else(|| "なし".into())
                 )));
             }
@@ -563,6 +574,43 @@ fn convert_wide(
         return Ok(table("指標として読める列がありません"));
     }
     Ok(Converted::Metrics(out))
+}
+
+/// Columns that look like the series key of a panel: within one position on the
+/// time axis their value changes, so they are what tells the rows apart.
+fn series_key_candidates(
+    header: &[String],
+    rows: &[Vec<String>],
+    axis: Option<usize>,
+) -> Vec<String> {
+    let Some(axis) = axis else { return Vec::new() };
+    let mut out = Vec::new();
+    for (i, column) in header.iter().enumerate() {
+        if i == axis {
+            continue;
+        }
+        let mut by_step: std::collections::HashMap<&str, &str> = std::collections::HashMap::new();
+        let mut varies = false;
+        for row in rows {
+            let (Some(step), Some(value)) = (row.get(axis), row.get(i)) else {
+                continue;
+            };
+            match by_step.insert(step.as_str(), value.as_str()) {
+                Some(previous) if previous != value.as_str() => {
+                    varies = true;
+                    break;
+                }
+                _ => {}
+            }
+        }
+        if varies {
+            out.push(column.clone());
+        }
+        if out.len() == 3 {
+            break;
+        }
+    }
+    out
 }
 
 /// Which column holds the value in an already-long file.

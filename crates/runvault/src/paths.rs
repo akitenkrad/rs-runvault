@@ -1,6 +1,8 @@
 //! Where runs live, and the `latest_finished` link.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, SystemTime};
 
 use crate::error::{Error, Result};
 use crate::files;
@@ -8,6 +10,15 @@ use crate::status::RunStatus;
 
 /// The link in an experiment directory that points at the last completed run.
 pub const LATEST_FINISHED: &str = "latest_finished";
+
+/// Held while `latest_finished` is compared and replaced.
+const LINK_MUTEX: &str = ".latest_finished.mutex";
+
+/// How long to wait for the mutex before assuming its holder died.
+const MUTEX_STALE_AFTER: Duration = Duration::from_secs(30);
+
+/// Makes each process's temporary link name unique within the process too.
+static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// `<results_root>/<experiment>`.
 pub fn experiment_dir(results_root: &Path, experiment: &str) -> PathBuf {
@@ -34,6 +45,10 @@ pub fn update_latest_finished(
     slug: &str,
     finished_at: &str,
 ) -> Result<bool> {
+    // Reading the current link and replacing it have to be one step. Two runs
+    // finishing at once would otherwise both read the same old link, and the one
+    // that finished earlier could install itself last.
+    let _guard = LinkMutex::acquire(experiment_dir)?;
     let link = experiment_dir.join(LATEST_FINISHED);
 
     if let Some(current) = read_link_status(&link)?
@@ -43,11 +58,69 @@ pub fn update_latest_finished(
     }
 
     // A symlink cannot be replaced in place, so make a new one and rename over.
-    let tmp = experiment_dir.join(format!(".{LATEST_FINISHED}.tmp-{}", std::process::id()));
+    let tmp = experiment_dir.join(format!(
+        ".{LATEST_FINISHED}.tmp-{}-{}",
+        std::process::id(),
+        TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
+    ));
     let _ = std::fs::remove_file(&tmp);
     symlink(Path::new(slug), &tmp).map_err(|e| Error::io(&tmp, e))?;
     std::fs::rename(&tmp, &link).map_err(|e| Error::io(&link, e))?;
     Ok(true)
+}
+
+/// A directory-wide mutex, made of a file that only one creator can win.
+struct LinkMutex {
+    path: PathBuf,
+}
+
+impl LinkMutex {
+    fn acquire(experiment_dir: &Path) -> Result<Self> {
+        std::fs::create_dir_all(experiment_dir).map_err(|e| Error::io(experiment_dir, e))?;
+        let path = experiment_dir.join(LINK_MUTEX);
+        let deadline = std::time::Instant::now() + MUTEX_STALE_AFTER;
+
+        loop {
+            match std::fs::OpenOptions::new()
+                .create_new(true)
+                .write(true)
+                .open(&path)
+            {
+                Ok(mut file) => {
+                    use std::io::Write;
+                    let _ = write!(file, "{}", std::process::id());
+                    return Ok(Self { path });
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                    // A holder that died leaves the file behind; take it over once
+                    // it is older than a whole update could possibly need.
+                    if is_stale(&path) || std::time::Instant::now() >= deadline {
+                        let _ = std::fs::remove_file(&path);
+                        continue;
+                    }
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Err(e) => return Err(Error::io(&path, e)),
+            }
+        }
+    }
+}
+
+fn is_stale(path: &Path) -> bool {
+    std::fs::metadata(path)
+        .and_then(|m| m.modified())
+        .and_then(|t| {
+            SystemTime::now()
+                .duration_since(t)
+                .map_err(std::io::Error::other)
+        })
+        .is_ok_and(|age| age > MUTEX_STALE_AFTER)
+}
+
+impl Drop for LinkMutex {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
 }
 
 /// The status of whatever `latest_finished` points at, when it points anywhere.

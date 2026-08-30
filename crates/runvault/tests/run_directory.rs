@@ -742,3 +742,216 @@ fn the_cli_finds_verifies_and_sweeps_runs() {
     assert!(ok);
     assert!(stdout.contains("0 件が異常終了"), "{stdout}");
 }
+
+#[test]
+fn an_explicit_failure_tears_down_in_the_same_order_as_a_success() {
+    let results = tempfile::tempdir().unwrap();
+    let mut run = Run::start(
+        RunOptions::new("e", "main")
+            .repo_id("r")
+            .domain("other")
+            .origin(Origin::Manual)
+            .results_root(results.path())
+            .parameters(&json!({}))
+            .unwrap(),
+    )
+    .unwrap();
+    let dir = run.dir().to_path_buf();
+    run.log_metric("asr", 0.21).send().unwrap();
+    assert!(
+        dir.join(".runvault.lock").is_file(),
+        "the run should be holding its lock"
+    );
+
+    let returned = run.fail("api", "the provider returned 500 twice").unwrap();
+    assert_eq!(returned, dir);
+
+    // The lock must be gone before status.json exists, or a finished run reads
+    // as still running — the one state verify refuses.
+    assert!(!dir.join(".runvault.lock").exists());
+    let status = read_json(&dir.join("status.json"));
+    assert_valid("status", &status);
+    assert_eq!(status["state"], "failed");
+    assert_eq!(status["error"]["kind"], "api");
+    assert_eq!(status["counts"]["metrics"], 1);
+
+    runvault::verify::shallow(&dir).expect("a failed run must still be self-consistent");
+
+    // A failed run is not the experiment's latest.
+    assert!(!results.path().join("e/latest_finished").exists());
+}
+
+#[test]
+fn concurrent_finishes_leave_the_link_on_the_newest_one() {
+    // Both runs read the link and both replace it; without a lock around the
+    // compare-and-swap the one that finished first could install itself last.
+    use std::sync::{Arc, Barrier};
+
+    let results = tempfile::tempdir().unwrap();
+    let experiment = results.path().join("race");
+    std::fs::create_dir_all(&experiment).unwrap();
+
+    let make = |slug: &str, finished_at: &str| {
+        let dir = experiment.join(slug);
+        std::fs::create_dir_all(&dir).unwrap();
+        let status = json!({
+            "schema_version": "1.0",
+            "run_uid": "01K3QZ8F7H9M2N4P6R8T0V2X4Z",
+            "state": "finished",
+            "started_at": finished_at,
+            "finished_at": finished_at,
+            "duration_sec": 1.0,
+            "exit_code": 0,
+            "collision_index": null,
+            "error": null,
+            "counts": null
+        });
+        std::fs::write(
+            dir.join("status.json"),
+            serde_json::to_string(&status).unwrap(),
+        )
+        .unwrap();
+    };
+    make("early", "2026-08-30T09:00:00+09:00");
+    make("late", "2026-08-30T12:00:00+09:00");
+
+    for _ in 0..20 {
+        let _ = std::fs::remove_file(experiment.join("latest_finished"));
+        let barrier = Arc::new(Barrier::new(2));
+        let handles: Vec<_> = [
+            ("late", "2026-08-30T12:00:00+09:00"),
+            ("early", "2026-08-30T09:00:00+09:00"),
+        ]
+        .into_iter()
+        .map(|(slug, at)| {
+            let experiment = experiment.clone();
+            let barrier = Arc::clone(&barrier);
+            std::thread::spawn(move || {
+                barrier.wait();
+                runvault::paths::update_latest_finished(&experiment, slug, at).unwrap();
+            })
+        })
+        .collect();
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        let target = std::fs::read_link(experiment.join("latest_finished")).unwrap();
+        assert_eq!(
+            target.to_string_lossy(),
+            "late",
+            "the link went back to the run that finished earlier"
+        );
+    }
+}
+
+#[test]
+fn resuming_a_run_whose_status_cannot_be_read_is_refused() {
+    let results = tempfile::tempdir().unwrap();
+    let options = || {
+        RunOptions::new("e", "main")
+            .repo_id("r")
+            .domain("other")
+            .origin(Origin::Manual)
+            .results_root(results.path())
+            .parameters(&json!({}))
+            .unwrap()
+    };
+
+    let first = Run::start(options()).unwrap();
+    let first_dir = first.dir().to_path_buf();
+    let first_uid = first.run_uid().to_string();
+    first.fail("crash", "died mid-run").unwrap();
+
+    let second = Run::start(options().lineage(runvault::Lineage {
+        sweep_id: None,
+        parent_run_uid: None,
+        resumed_from: Some(first_uid),
+        derived_from: None,
+    }))
+    .unwrap();
+    let second_dir = second.dir().to_path_buf();
+    second.finish().unwrap();
+    runvault::verify::shallow(&second_dir).expect("resuming a failed run is fine");
+
+    // The run it resumes is right there, but no longer says it failed.
+    std::fs::remove_file(first_dir.join("status.json")).unwrap();
+    let err = runvault::verify::shallow(&second_dir)
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("resumed_from"), "{err}");
+}
+
+#[test]
+fn two_runs_that_name_each_other_as_a_sweep_parent_are_a_cycle() {
+    let results = tempfile::tempdir().unwrap();
+    let options = || {
+        RunOptions::new("e", "sweep")
+            .repo_id("r")
+            .domain("other")
+            .origin(Origin::Manual)
+            .results_root(results.path())
+            .parameters(&json!({}))
+            .unwrap()
+    };
+
+    let a = Run::start(options()).unwrap();
+    let (a_dir, a_uid) = (a.dir().to_path_buf(), a.run_uid().to_string());
+    a.finish().unwrap();
+    let b = Run::start(options()).unwrap();
+    let (b_dir, b_uid) = (b.dir().to_path_buf(), b.run_uid().to_string());
+    b.finish().unwrap();
+
+    // Point each at the other. A chain walk that only follows resume/derive
+    // never notices, and an aggregate that walks parents never terminates.
+    let point_at = |dir: &Path, uid: &str| {
+        let mut meta = read_json(&dir.join("run.json"));
+        meta["lineage"] = json!({
+            "sweep_id": "s1",
+            "parent_run_uid": uid,
+            "resumed_from": null,
+            "derived_from": null
+        });
+        assert_valid("run", &meta);
+        std::fs::write(dir.join("run.json"), serde_json::to_string(&meta).unwrap()).unwrap();
+    };
+    point_at(&a_dir, &b_uid);
+    point_at(&b_dir, &a_uid);
+
+    let err = runvault::verify::shallow(&a_dir).unwrap_err().to_string();
+    assert!(err.contains("循環"), "{err}");
+}
+
+#[test]
+fn gc_never_leaves_a_live_run_holding_both_a_status_and_a_lock() {
+    // gc reads the lock, judges it, then acts. Hammering a run that is alive the
+    // whole time must never produce the one state verify refuses.
+    let results = tempfile::tempdir().unwrap();
+    let run = Run::start(
+        RunOptions::new("e", "main")
+            .repo_id("r")
+            .domain("other")
+            .origin(Origin::Manual)
+            .results_root(results.path())
+            .parameters(&json!({}))
+            .unwrap(),
+    )
+    .unwrap();
+    let dir = run.dir().to_path_buf();
+
+    for _ in 0..50 {
+        let swept = runvault::gc::collect(results.path(), false).unwrap();
+        assert_eq!(swept.len(), 1);
+        assert_eq!(swept[0].outcome, runvault::gc::Outcome::Running);
+        assert!(
+            dir.join(".runvault.lock").is_file(),
+            "the live run lost its lock"
+        );
+        assert!(
+            !dir.join("status.json").exists(),
+            "a live run was marked finished"
+        );
+    }
+    run.finish().unwrap();
+    runvault::verify::shallow(&dir).unwrap();
+}

@@ -220,7 +220,18 @@ fn the_whole_replication_corpus_reads_without_key_collisions() {
         "results {} 件 / run {runs} 件 / 指標 {metrics} 行 / 表のまま {tables} 件",
         results_roots.len()
     );
+
+    // Lower bounds, not just "it did not crash": a reader that quietly stopped
+    // converting anything would otherwise sweep the whole corpus and pass.
     assert!(runs > 200, "only {runs} runs were found");
+    assert!(
+        metrics > 20_000,
+        "only {metrics} metric rows were read; the corpus yielded 21,857 on 2026-08-30"
+    );
+    assert!(
+        tables < runs,
+        "{tables} tables against {runs} runs: most runs stopped converting"
+    );
 }
 
 fn shellexpand(path: &str) -> String {

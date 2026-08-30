@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 use chrono::Local;
 
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::files;
 use crate::lockfile::{self, Liveness};
 use crate::meta::{RunMeta, SCHEMA_VERSION};
@@ -21,6 +21,8 @@ pub enum Outcome {
     Running,
     /// The lock was stale: it was removed and `status.json` written as failed.
     Reaped,
+    /// It looked dead, then proved otherwise. Nothing was left behind.
+    Contested,
 }
 
 /// One run `gc` looked at.
@@ -59,22 +61,41 @@ pub fn collect_one(run_dir: &Path, dry_run: bool) -> Result<Option<Reaped>> {
         return Ok(None);
     };
 
+    let here = |outcome| {
+        Ok(Some(Reaped {
+            dir: run_dir.to_path_buf(),
+            outcome,
+        }))
+    };
+
     let host = crate::env::host();
     if record.liveness(Local::now(), &host) == Liveness::Running {
-        return Ok(Some(Reaped {
-            dir: run_dir.to_path_buf(),
-            outcome: Outcome::Running,
-        }));
+        return here(Outcome::Running);
     }
 
-    if !dry_run {
-        lockfile::remove(run_dir)?;
-        write_failed(run_dir, &record)?;
+    if dry_run {
+        return here(Outcome::Reaped);
     }
-    Ok(Some(Reaped {
-        dir: run_dir.to_path_buf(),
-        outcome: Outcome::Reaped,
-    }))
+
+    // Judging and acting are separate reads of the same file. If the heartbeat
+    // moved in between, the run is alive after all and must be left alone.
+    if lockfile::read(run_dir)?.as_ref() != Some(&record) {
+        return here(Outcome::Running);
+    }
+
+    lockfile::remove(run_dir)?;
+    write_failed(run_dir, &record)?;
+
+    // The lock coming back means the process was never dead. Take the verdict
+    // back rather than leave a live run marked failed, with its lock beside a
+    // `status.json` — the one state `verify` refuses.
+    if lockfile::read(run_dir)?.is_some() {
+        let status = run_dir.join("status.json");
+        std::fs::remove_file(&status).map_err(|e| Error::io(&status, e))?;
+        return here(Outcome::Contested);
+    }
+
+    here(Outcome::Reaped)
 }
 
 fn write_failed(run_dir: &Path, record: &lockfile::LockRecord) -> Result<()> {

@@ -392,41 +392,88 @@ fn check_lineage(run_dir: &Path, meta: &RunMeta) -> Result<()> {
 
     let siblings = sibling_runs(run_dir);
 
+    // A run that cannot be found may live in another repository; that is not the
+    // same as one that is found and does not say it failed.
     if let Some(from) = &lineage.resumed_from
         && let Some(dir) = siblings.get(from.as_str())
     {
-        let status: Option<RunStatus> = files::read_json(&dir.join("status.json")).ok();
-        match status.map(|s| s.state) {
-            Some(State::Failed) | None => {}
-            Some(State::Finished) => {
+        match files::read_json::<RunStatus>(&dir.join("status.json")) {
+            Ok(status) if status.state == State::Failed => {}
+            Ok(_) => {
                 return Err(Error::verify(format!(
                     "resumed_from `{from}` は finished です (正常終了した run の続きは再解析なので derived_from で表します)"
+                )));
+            }
+            Err(e) => {
+                return Err(Error::verify(format!(
+                    "resumed_from `{from}` が failed であることを確かめられません: {e}"
                 )));
             }
         }
     }
 
-    let mut seen = HashSet::new();
-    seen.insert(meta.run_uid.clone());
-    let mut cursor = lineage
-        .resumed_from
-        .clone()
-        .or_else(|| lineage.derived_from.clone());
-    while let Some(uid) = cursor {
-        if !seen.insert(uid.clone()) {
-            return Err(Error::verify(format!(
-                "lineage の鎖が循環しています ({uid})"
-            )));
+    check_no_cycle(&meta.run_uid, lineage, &siblings)
+}
+
+/// Whether any lineage edge leads back to a run already on the current path.
+///
+/// All three edges are followed, not just the resume/derive chain: two runs that
+/// name each other as a sweep parent are as unwalkable as a resume loop.
+fn check_no_cycle(
+    run_uid: &str,
+    lineage: &Lineage,
+    siblings: &HashMap<String, std::path::PathBuf>,
+) -> Result<()> {
+    #[derive(PartialEq)]
+    enum Mark {
+        OnPath,
+        Done,
+    }
+
+    let edges_of = |l: &Lineage| -> Vec<String> {
+        [&l.parent_run_uid, &l.resumed_from, &l.derived_from]
+            .into_iter()
+            .flatten()
+            .cloned()
+            .collect()
+    };
+
+    let mut marks: HashMap<String, Mark> = HashMap::new();
+    let mut stack: Vec<(String, bool)> = vec![(run_uid.to_string(), false)];
+
+    while let Some((uid, leaving)) = stack.pop() {
+        if leaving {
+            marks.insert(uid, Mark::Done);
+            continue;
         }
-        let Some(dir) = siblings.get(uid.as_str()) else {
-            break;
+        match marks.get(&uid) {
+            Some(Mark::OnPath) => {
+                return Err(Error::verify(format!(
+                    "lineage の鎖が循環しています ({uid})"
+                )));
+            }
+            Some(Mark::Done) => continue,
+            None => {}
+        }
+        marks.insert(uid.clone(), Mark::OnPath);
+        stack.push((uid.clone(), true));
+
+        let next = if uid == run_uid {
+            edges_of(lineage)
+        } else {
+            match siblings
+                .get(&uid)
+                .map(|dir| files::read_json::<RunMeta>(&dir.join("run.json")))
+            {
+                // A run outside this results root ends the walk; it is not proof
+                // of a cycle, and it is not proof of the absence of one either.
+                Some(Ok(other)) => other.lineage.as_ref().map(edges_of).unwrap_or_default(),
+                _ => Vec::new(),
+            }
         };
-        let Ok(other) = files::read_json::<RunMeta>(&dir.join("run.json")) else {
-            break;
-        };
-        cursor = other
-            .lineage
-            .and_then(|l| l.resumed_from.or(l.derived_from));
+        for edge in next {
+            stack.push((edge, false));
+        }
     }
     Ok(())
 }
