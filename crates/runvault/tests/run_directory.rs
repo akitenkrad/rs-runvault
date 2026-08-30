@@ -1144,7 +1144,16 @@ fn a_sweep_parent_is_driven_by_a_list_of_seeds_not_by_one() {
     ]);
     assert!(ok, "{latest_run}");
     assert!(latest_run.contains("/run_"), "{latest_run}");
-    assert_eq!(latest_run, child_dirs[1].to_string_lossy());
+    // Both spellings of --latest resolve the path the same way, so a shell can
+    // compare them without knowing which branch answered.
+    assert_eq!(
+        PathBuf::from(&latest_run),
+        std::fs::canonicalize(&child_dirs[1]).unwrap()
+    );
+    assert_eq!(
+        PathBuf::from(&latest),
+        std::fs::canonicalize(&parent_dir).unwrap()
+    );
 }
 
 #[test]
@@ -1162,14 +1171,11 @@ fn metrics_written_as_a_batch_land_as_the_same_rows() {
     .unwrap();
     let dir = run.dir().to_path_buf();
 
-    run.log_metrics(Some((3, "step")), "run", &[("a", 0.5), ("b", 1.5)])
+    run.log_metrics_at(3, "step", "run", &[("a", 0.5), ("b", 1.5)])
         .unwrap();
-    run.log_metrics(None, "run", &[("asr", 0.25)]).unwrap();
+    run.log_metrics("run", &[("asr", 0.25)]).unwrap();
     // The batch is checked as a whole before anything is written.
-    assert!(
-        run.log_metrics(None, "trial", &[("cost_usd", 1.0)])
-            .is_err()
-    );
+    assert!(run.log_metrics("trial", &[("cost_usd", 1.0)]).is_err());
     run.finish().unwrap();
 
     let rows = csv_rows(&dir.join("metrics.csv"), &["value"], &["step"]);
@@ -1182,4 +1188,54 @@ fn metrics_written_as_a_batch_land_as_the_same_rows() {
     assert_eq!(rows[0]["step_unit"], "step");
     assert_eq!(rows[2]["name"], "asr");
     assert!(rows[2]["step"].is_null());
+}
+
+#[test]
+fn a_sweep_parent_may_not_name_its_own_sweep_twice() {
+    let results = tempfile::tempdir().unwrap();
+    let options = || {
+        RunOptions::new("e", "sweep")
+            .repo_id("r")
+            .domain("other")
+            .origin(Origin::Manual)
+            .results_root(results.path())
+            .parameters(&json!({}))
+            .unwrap()
+            .sweep_parent()
+    };
+
+    let clash = options().lineage(runvault::Lineage {
+        sweep_id: Some("mine".into()),
+        ..Default::default()
+    });
+    let err = Run::start(clash)
+        .err()
+        .map(|e| e.to_string())
+        .expect("refused");
+    assert!(err.contains("sweep_id"), "{err}");
+
+    let child_shaped = options().lineage(runvault::Lineage {
+        parent_run_uid: Some("01K3QZ8F7H9M2N4P6R8T0V2X4Z".into()),
+        ..Default::default()
+    });
+    assert!(
+        Run::start(child_shaped).is_err(),
+        "a parent cannot have a parent"
+    );
+
+    // Other lineage edges survive being filled in.
+    let derived = Run::start(options().lineage(runvault::Lineage {
+        derived_from: Some("01K3QZ8F7H9M2N4P6R8T0V2X4Z".into()),
+        ..Default::default()
+    }))
+    .unwrap();
+    assert_eq!(derived.sweep_id(), Some(derived.run_slug()));
+    let dir = derived.dir().to_path_buf();
+    derived.finish().unwrap();
+    let meta = read_json(&dir.join("run.json"));
+    assert_valid("run", &meta);
+    assert_eq!(
+        meta["lineage"]["derived_from"],
+        "01K3QZ8F7H9M2N4P6R8T0V2X4Z"
+    );
 }

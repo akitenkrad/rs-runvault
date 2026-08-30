@@ -134,7 +134,8 @@ fn cmd_path(args: &PathArgs) -> Result<ExitCode> {
             .max_by(|a, b| a.0.cmp(&b.0));
         return Ok(match newest {
             Some((_, dir)) => {
-                println!("{}", dir.display());
+                // Same shape as the symlink branch, so a shell can compare them.
+                println!("{}", std::fs::canonicalize(&dir).unwrap_or(dir).display());
                 ExitCode::SUCCESS
             }
             None => {

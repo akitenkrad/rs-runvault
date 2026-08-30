@@ -61,6 +61,7 @@ pub struct RunOptions {
     replicate_index: Option<u64>,
     llm: Option<Llm>,
     lineage: Option<Lineage>,
+    sweep_parent: bool,
     research: Research,
     ext: Option<Map<String, Value>>,
     cli_args: Option<Vec<String>>,
@@ -87,6 +88,7 @@ impl RunOptions {
             replicate_index: None,
             llm: None,
             lineage: None,
+            sweep_parent: false,
             research: Research::default(),
             ext: None,
             cli_args: None,
@@ -237,6 +239,17 @@ impl RunOptions {
         self
     }
 
+    /// Declares this run to be the parent of a sweep.
+    ///
+    /// `runvault` fills in `lineage.sweep_id` with the run's own `run_slug`,
+    /// because the caller cannot know it: the slug carries the hashes, which are
+    /// only computed inside [`Run::start`]. The children read it back from
+    /// [`Run::sweep_id`].
+    pub fn sweep_parent(mut self) -> Self {
+        self.sweep_parent = true;
+        self
+    }
+
     /// The paper and targets this run reproduces.
     pub fn replication(mut self, replication: impl Into<Replication>) -> Self {
         self.research = replication.into().into();
@@ -282,10 +295,25 @@ impl RunOptions {
         // A sweep parent is driven by a list of seeds, not by one; the list lives
         // in `/parameters` and reaches `execution_hash` through `seed_pointers`.
         // Its children still need theirs.
-        let is_sweep_parent = self
-            .lineage
-            .as_ref()
-            .is_some_and(|l| l.sweep_id.is_some() && l.parent_run_uid.is_none());
+        if self.sweep_parent
+            && let Some(lineage) = &self.lineage
+        {
+            if lineage.sweep_id.is_some() {
+                return Err(Error::spec(
+                    "sweep_parent() を使うなら lineage.sweep_id は空にしてください (runvault が run_slug を入れます)",
+                ));
+            }
+            if lineage.parent_run_uid.is_some() {
+                return Err(Error::spec(
+                    "sweep 親が parent_run_uid を持つことはできません",
+                ));
+            }
+        }
+        let is_sweep_parent = self.sweep_parent
+            || self
+                .lineage
+                .as_ref()
+                .is_some_and(|l| l.sweep_id.is_some() && l.parent_run_uid.is_none());
         if domain == "simulation" && self.master_seed.is_none() && !is_sweep_parent {
             return Err(Error::spec(
                 "domain=simulation では master_seed が必要です (RunOptions::master_seed)．\
@@ -428,7 +456,7 @@ impl Run {
             rng: rng_of(&options, &domain),
             llm: options.llm.clone(),
             data: options.data.clone(),
-            lineage: options.lineage.clone(),
+            lineage: lineage_of(&options, &run_slug),
             research: options.research.clone(),
             ext: options.ext.clone(),
         };
@@ -492,6 +520,11 @@ impl Run {
         &self.meta
     }
 
+    /// The sweep this run belongs to, which for a sweep parent is its own id.
+    pub fn sweep_id(&self) -> Option<&str> {
+        self.meta.lineage.as_ref()?.sweep_id.as_deref()
+    }
+
     /// Records a number. Call `.send()` on the returned builder.
     pub fn log_metric(&mut self, name: impl Into<String>, value: f64) -> MetricEntry<'_> {
         MetricEntry {
@@ -518,11 +551,26 @@ impl Run {
         }
     }
 
-    /// Appends several metrics that share a step and a scope, flushing once.
+    /// Appends several aggregate metrics that share a scope, flushing once.
     ///
     /// One call per number means one flush per number, which shows on a run that
     /// records a handful of metrics on every step of a long simulation.
-    pub fn log_metrics(
+    pub fn log_metrics(&mut self, scope: &str, values: &[(&str, f64)]) -> Result<()> {
+        self.log_metric_batch(None, scope, values)
+    }
+
+    /// The same, for values that sit on a time axis.
+    pub fn log_metrics_at(
+        &mut self,
+        step: u64,
+        unit: &str,
+        scope: &str,
+        values: &[(&str, f64)],
+    ) -> Result<()> {
+        self.log_metric_batch(Some((step, unit)), scope, values)
+    }
+
+    fn log_metric_batch(
         &mut self,
         step: Option<(u64, &str)>,
         scope: &str,
@@ -934,6 +982,16 @@ fn record_failed_start(
         counts: None,
     };
     let _ = files::write_json_atomically(&dir.join("status.json"), &status);
+}
+
+/// The lineage as written, with the sweep parent's own id filled in.
+fn lineage_of(options: &RunOptions, run_slug: &str) -> Option<Lineage> {
+    if !options.sweep_parent {
+        return options.lineage.clone();
+    }
+    let mut lineage = options.lineage.clone().unwrap_or_default();
+    lineage.sweep_id = Some(run_slug.to_string());
+    Some(lineage)
 }
 
 fn rng_of(options: &RunOptions, domain: &str) -> Option<crate::meta::Rng> {

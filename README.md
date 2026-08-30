@@ -49,8 +49,13 @@ run.finish()?;
 Write generated files under `run.dir()/artifacts/` (and logs under `logs/`):
 `finish()` walks exactly those two trees into `manifest.csv`, so anything written
 elsewhere in the run directory is not part of the record. A sweep parent is
-driven by a list of seeds rather than one, so it declares `lineage.sweep_id` and
-leaves `master_seed` unset; its children each carry their own.
+driven by a list of seeds rather than one, so it is declared with
+`RunOptions::sweep_parent()` — which fills in `lineage.sweep_id` with the run's
+own slug — and leaves `master_seed` unset; its children each carry their own.
+
+`manifest.csv` is written once, by `finish()`. Anything added to the run
+directory afterwards is not in it, so a figure drawn later belongs beside the run
+rather than inside it.
 
 A run dropped without `finish()` records itself as failed. A run whose process is
 killed leaves a lock behind, and `runvault gc` turns that into a recorded
