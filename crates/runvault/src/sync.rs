@@ -49,6 +49,28 @@ const LEGACY_EXTENSIONS: [&str; 9] = [
     "json", "jsonl", "csv", "tsv", "txt", "md", "yaml", "yml", "toml",
 ];
 
+/// The directories §1.4 keeps out of the aggregation repository.
+///
+/// The rule is about what the file *is*, not what it is named: a per-step grid
+/// dump is the heavy half of the record whether it is written as `.npy` or as
+/// `.csv`. Deciding by extension alone let `snapshots/` through, which is the
+/// one thing §1.4 names outright — a single repository shipped 745 files where
+/// it should have shipped 30.
+const NEVER_SYNCED_DIRS: [&str; 4] = ["artifacts", "logs", "snapshots", "figures"];
+
+/// Whether any component of a relative path is a directory that never travels.
+fn is_heavy_half(rel: &str) -> bool {
+    Path::new(rel)
+        .parent()
+        .into_iter()
+        .flat_map(Path::components)
+        .filter_map(|c| match c {
+            std::path::Component::Normal(part) => part.to_str(),
+            _ => None,
+        })
+        .any(|part| NEVER_SYNCED_DIRS.contains(&part))
+}
+
 /// Files that only ever grow, and whose history a re-sync must not rewrite.
 fn is_append_only(rel: &str) -> bool {
     matches!(rel, "events.jsonl" | "metrics.csv")
@@ -426,11 +448,11 @@ pub fn plan_legacy(
 
     let mut files = Vec::new();
     for rel in files::walk_files(run_dir, run_dir)? {
-        let keep = Path::new(&rel)
+        let readable = Path::new(&rel)
             .extension()
             .and_then(|e| e.to_str())
             .is_some_and(|e| LEGACY_EXTENSIONS.contains(&e.to_ascii_lowercase().as_str()));
-        if keep {
+        if readable && !is_heavy_half(&rel) {
             files.push(planned_file(run_dir, rel, options.compress_over_bytes)?);
         }
     }

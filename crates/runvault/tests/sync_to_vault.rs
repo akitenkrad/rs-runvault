@@ -607,11 +607,34 @@ fn the_readable_name_links_to_the_run_without_claiming_to_be_unique() {
 /// A run directory in the shape the repositories used before this specification.
 fn legacy_run(results: &Path) -> PathBuf {
     let dir = results.join("schelling").join("main_20240115_101500");
-    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::create_dir_all(dir.join("snapshots")).unwrap();
     std::fs::write(dir.join("config.json"), r#"{"rows": 13}"#).unwrap();
     std::fs::write(dir.join("metrics.csv"), "t,segregation\n0,0.31\n").unwrap();
     std::fs::write(dir.join("figure.png"), vec![0u8; 2048]).unwrap();
+    // A per-step grid dump: the heavy half of the record, written as CSV.
+    std::fs::write(dir.join("snapshots/step_00000.csv"), "a,b\n1,0\n").unwrap();
     dir
+}
+
+#[test]
+fn a_legacy_grid_dump_stays_behind_even_though_it_is_a_csv() {
+    let results = tempfile::tempdir().unwrap();
+    let vault = private_vault();
+    let dir = legacy_run(results.path());
+
+    let plan = sent(
+        sync::plan_legacy(results.path(), &dir, REPO_ID, vault.path(), &options(true)).unwrap(),
+    );
+
+    // §1.4 names `snapshots/` among the directories that never travel. Deciding
+    // by extension alone shipped them, because a grid dump happens to be a CSV:
+    // one real repository sent 745 files where it should have sent 30.
+    assert!(
+        !plan.files.iter().any(|f| f.path.starts_with("snapshots/")),
+        "{:?}",
+        plan.files.iter().map(|f| &f.path).collect::<Vec<_>>()
+    );
+    assert!(plan.files.iter().any(|f| f.path == "metrics.csv"));
 }
 
 #[test]
