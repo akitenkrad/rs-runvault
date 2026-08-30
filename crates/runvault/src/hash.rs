@@ -69,7 +69,10 @@ pub fn data_identity(data: &[Dataset]) -> Vec<u8> {
         push_lp(&mut blob, value.as_bytes());
         push_lp(&mut blob, d.hash_scope_str().as_bytes());
         push_lp(&mut blob, d.uri.as_deref().unwrap_or("").as_bytes());
-        push_lp(&mut blob, d.n.map(|n| n.to_string()).unwrap_or_default().as_bytes());
+        push_lp(
+            &mut blob,
+            d.n.map(|n| n.to_string()).unwrap_or_default().as_bytes(),
+        );
     }
     blob
 }
@@ -83,7 +86,10 @@ pub fn config_hash(
     let pruned = prune(parameters, &exclusions.removed_from_config());
     let canonical = canonicalize(&pruned)?;
     let identity = data_identity(data);
-    Ok(blake3_hex(&join_lp([canonical.as_bytes(), identity.as_slice()])))
+    Ok(blake3_hex(&join_lp([
+        canonical.as_bytes(),
+        identity.as_slice(),
+    ])))
 }
 
 /// The seeds, as the byte string `execution_hash` takes as its second input.
@@ -117,7 +123,10 @@ pub fn execution_hash(
         Some(c) => (
             c.git_commit.as_str(),
             if c.git_dirty { "true" } else { "false" },
-            c.dirty_hash.as_ref().map(|h| h.value.as_str()).unwrap_or(""),
+            c.dirty_hash
+                .as_ref()
+                .map(|h| h.value.as_str())
+                .unwrap_or(""),
         ),
         None => ("", "", ""),
     };
@@ -325,7 +334,10 @@ mod tests {
         );
         assert_ne!(plain, locked);
         // Same inputs, same hash: two boxes with the same OS and deps agree.
-        assert_eq!(plain, env_hash("macos", "aarch64", Some("1.94.0"), None, &[]));
+        assert_eq!(
+            plain,
+            env_hash("macos", "aarch64", Some("1.94.0"), None, &[])
+        );
     }
 
     #[test]

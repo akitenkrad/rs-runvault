@@ -3,6 +3,12 @@
 
 Usage:
     uv run --with jsonschema --with rfc3339-validator python tools/check_design_doc.py [DESIGN_DOC]
+    uv run --with jsonschema --with rfc3339-validator python tools/check_design_doc.py --if-present
+
+The design note lives in the author's Obsidian vault, not in this repository, so
+CI cannot read it. `--if-present` checks the schemas anyway and reports that the
+note was not reachable, instead of passing silently or failing on a path that
+was never going to exist on a runner.
 
 Examples in the design note carry an HTML comment marker (invisible in Obsidian)
 immediately before the fenced block:
@@ -343,7 +349,9 @@ def check_pointers(config: dict) -> list[str]:
 
 
 def main() -> int:
-    doc_path = Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_DOC
+    args = [a for a in sys.argv[1:] if a != "--if-present"]
+    if_present = "--if-present" in sys.argv[1:]
+    doc_path = Path(args[0]) if args else DEFAULT_DOC
     registry, schemas = load_registry()
     index = json.loads((SCHEMA_DIR / "index.columns.json").read_text("utf-8"))
     index_meta = json.loads((SCHEMA_DIR / "index.columns.meta.json").read_text("utf-8"))
@@ -359,6 +367,16 @@ def main() -> int:
     failures += [f"vocabulary: {e}" for e in check_vocabulary(schemas, index)]
     vocab = tomllib.loads((SCHEMA_DIR / "vocabulary.toml").read_text("utf-8"))
     print(f"schema     : {len(schemas)} 件 + 索引メタを検査")
+
+    if if_present and not doc_path.is_file():
+        print(f"design doc : {doc_path} が無いので例の検証は省略しました (--if-present)")
+        if failures:
+            print(f"\nNG {len(failures)} 件")
+            for f in failures:
+                print("  -", f)
+            return 1
+        print("スキーマだけ検査しました")
+        return 0
 
     text = doc_path.read_text(encoding="utf-8")
     checked = 0

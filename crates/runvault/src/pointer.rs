@@ -21,7 +21,9 @@ impl Pointer {
     /// Parses `/a/b~0c`. The empty pointer (the whole document) is rejected:
     /// excluding everything is never what the caller meant.
     pub fn parse(raw: &str) -> Result<Self> {
-        let syntax = || Error::PointerSyntax { pointer: raw.to_string() };
+        let syntax = || Error::PointerSyntax {
+            pointer: raw.to_string(),
+        };
         if !raw.starts_with('/') {
             return Err(syntax());
         }
@@ -42,7 +44,10 @@ impl Pointer {
             }
             tokens.push(token);
         }
-        Ok(Self { raw: raw.to_string(), tokens })
+        Ok(Self {
+            raw: raw.to_string(),
+            tokens,
+        })
     }
 
     /// The pointer exactly as written. Ordering of seeds uses this string.
@@ -68,7 +73,9 @@ impl Pointer {
         if self.resolve(root).is_some() {
             Ok(())
         } else {
-            Err(Error::PointerNotFound { pointer: self.raw.clone() })
+            Err(Error::PointerNotFound {
+                pointer: self.raw.clone(),
+            })
         }
     }
 }

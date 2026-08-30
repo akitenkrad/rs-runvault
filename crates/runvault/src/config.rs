@@ -96,7 +96,11 @@ impl Exclusions {
             .filter(|p| !hash_exclude.contains(p) && !seeds.contains(p))
             .collect();
 
-        Ok(Self { hash_exclude, seeds, invariant_to })
+        Ok(Self {
+            hash_exclude,
+            seeds,
+            invariant_to,
+        })
     }
 
     /// Everything removed before `config_hash` is taken.

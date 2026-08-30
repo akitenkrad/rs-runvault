@@ -13,7 +13,10 @@ use crate::error::{Error, Result};
 /// The same grammar guards a path element and an index key at once, so `/`,
 /// `..` and whitespace cannot reach either.
 pub fn validate_slug(field: &'static str, value: &str) -> Result<()> {
-    let bad = || Error::Slug { field, value: value.to_string() };
+    let bad = || Error::Slug {
+        field,
+        value: value.to_string(),
+    };
     if value.is_empty() || value.len() > 64 {
         return Err(bad());
     }
@@ -76,7 +79,10 @@ pub fn slug_hash_prefixes(slug: &str) -> Option<(&str, &str)> {
     if cfg8.len() != 8 || exec4.len() != 4 {
         return None;
     }
-    let hex = |s: &str| s.chars().all(|c| c.is_ascii_digit() || matches!(c, 'a'..='f'));
+    let hex = |s: &str| {
+        s.chars()
+            .all(|c| c.is_ascii_digit() || matches!(c, 'a'..='f'))
+    };
     (hex(cfg8) && hex(exec4)).then_some((cfg8, exec4))
 }
 
@@ -108,24 +114,40 @@ mod tests {
     #[test]
     fn run_uids_sort_by_time() {
         let early = new_run_uid(
-            DateTime::parse_from_rfc3339("2026-08-30T10:00:00+09:00").unwrap().into(),
+            DateTime::parse_from_rfc3339("2026-08-30T10:00:00+09:00")
+                .unwrap()
+                .into(),
         );
         let late = new_run_uid(
-            DateTime::parse_from_rfc3339("2026-08-30T11:00:00+09:00").unwrap().into(),
+            DateTime::parse_from_rfc3339("2026-08-30T11:00:00+09:00")
+                .unwrap()
+                .into(),
         );
         assert!(early < late, "{early} < {late}");
     }
 
     #[test]
     fn a_slug_carries_both_hash_prefixes() {
-        let slug = run_slug("main", "20260830_101500", &"9f2c41ab".repeat(8), &"3b1d".repeat(16), None);
+        let slug = run_slug(
+            "main",
+            "20260830_101500",
+            &"9f2c41ab".repeat(8),
+            &"3b1d".repeat(16),
+            None,
+        );
         assert_eq!(slug, "main_20260830_101500_9f2c41ab_3b1d");
         assert_eq!(slug_hash_prefixes(&slug), Some(("9f2c41ab", "3b1d")));
     }
 
     #[test]
     fn a_collision_suffix_survives_the_round_trip() {
-        let slug = run_slug("sweep", "20260830_101500", &"0".repeat(64), &"1".repeat(64), Some(2));
+        let slug = run_slug(
+            "sweep",
+            "20260830_101500",
+            &"0".repeat(64),
+            &"1".repeat(64),
+            Some(2),
+        );
         assert_eq!(slug, "sweep_20260830_101500_00000000_1111-2");
         assert_eq!(slug_hash_prefixes(&slug), Some(("00000000", "1111")));
     }

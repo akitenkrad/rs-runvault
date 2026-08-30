@@ -380,7 +380,10 @@ schema_type! {
 impl Hash {
     /// A BLAKE3 digest.
     pub fn blake3(value: impl Into<String>) -> Self {
-        Self { algorithm: Algorithm::Blake3, value: value.into() }
+        Self {
+            algorithm: Algorithm::Blake3,
+            value: value.into(),
+        }
     }
 
     pub(crate) fn algorithm_str(&self) -> &'static str {
@@ -397,5 +400,294 @@ impl Dataset {
 impl Lock {
     pub(crate) fn kind_str(&self) -> &'static str {
         self.kind.as_str()
+    }
+}
+
+// --- builders -------------------------------------------------------------
+
+impl Dataset {
+    /// A dataset used in the given role.
+    pub fn new(role: impl Into<String>, name: impl Into<String>) -> Self {
+        Self {
+            role: role.into(),
+            name: name.into(),
+            dataset_id: None,
+            version: None,
+            hash: None,
+            hash_scope: None,
+            n: None,
+            uri: None,
+            split: None,
+        }
+    }
+
+    /// Training data.
+    pub fn train(name: impl Into<String>) -> Self {
+        Self::new("train", name)
+    }
+
+    /// Evaluation data.
+    pub fn eval(name: impl Into<String>) -> Self {
+        Self::new("eval", name)
+    }
+
+    /// The initial state a simulation starts from.
+    pub fn init(name: impl Into<String>) -> Self {
+        Self::new("init", name)
+    }
+
+    /// The prompt set an attack draws from.
+    pub fn prompts(name: impl Into<String>) -> Self {
+        Self::new("prompts", name)
+    }
+
+    /// A stable id that includes the version.
+    pub fn dataset_id(mut self, id: impl Into<String>) -> Self {
+        self.dataset_id = Some(id.into());
+        self
+    }
+
+    /// The version, when it is not already inside `dataset_id`.
+    pub fn version(mut self, version: impl Into<String>) -> Self {
+        self.version = Some(version.into());
+        self
+    }
+
+    /// Which split was used.
+    pub fn split(mut self, split: impl Into<String>) -> Self {
+        self.split = Some(split.into());
+        self
+    }
+
+    /// How many records.
+    pub fn n(mut self, n: u64) -> Self {
+        self.n = Some(n);
+        self
+    }
+
+    /// Where the data came from.
+    pub fn uri(mut self, uri: impl Into<String>) -> Self {
+        self.uri = Some(uri.into());
+        self
+    }
+
+    /// Hashes a single file's bytes.
+    pub fn hash_of_file(mut self, path: impl AsRef<std::path::Path>) -> crate::Result<Self> {
+        let (digest, _) = crate::files::digest_file(path.as_ref())?;
+        self.hash = Some(Hash::blake3(digest));
+        self.hash_scope = Some(HashScope::File);
+        Ok(self)
+    }
+
+    /// Hashes a directory as the path-ordered list of `(relative path, content hash)`.
+    ///
+    /// Timestamps and permissions are left out: the same bytes laid out the same
+    /// way must hash the same on another machine.
+    pub fn hash_of_dir(mut self, path: impl AsRef<std::path::Path>) -> crate::Result<Self> {
+        let root = path.as_ref();
+        let mut blob = Vec::new();
+        for rel in crate::files::walk_files(root, root)? {
+            let (digest, _) = crate::files::digest_file(&root.join(&rel))?;
+            crate::canonical::push_lp(&mut blob, rel.as_bytes());
+            crate::canonical::push_lp(&mut blob, digest.as_bytes());
+        }
+        self.hash = Some(Hash::blake3(crate::canonical::blake3_hex(&blob)));
+        self.hash_scope = Some(HashScope::DirManifest);
+        Ok(self)
+    }
+}
+
+impl Work {
+    fn with_id(work_id: String) -> Self {
+        Self {
+            work_id,
+            doi: None,
+            arxiv_id: None,
+            paper_id: None,
+            title: String::new(),
+            year: None,
+            source_version: None,
+        }
+    }
+
+    /// A paper identified by DOI.
+    pub fn doi(doi: impl Into<String>) -> Self {
+        let doi = doi.into();
+        let mut work = Self::with_id(format!("doi:{doi}"));
+        work.doi = Some(doi);
+        work
+    }
+
+    /// A paper identified by arXiv id.
+    pub fn arxiv(id: impl Into<String>) -> Self {
+        let id = id.into();
+        let mut work = Self::with_id(format!("arxiv:{id}"));
+        work.arxiv_id = Some(id);
+        work
+    }
+
+    /// A paper identified by its id in the vault (`P00000009`).
+    pub fn paper_id(id: impl Into<String>) -> Self {
+        let id = id.into();
+        let mut work = Self::with_id(format!("paperid:{id}"));
+        work.paper_id = Some(id);
+        work
+    }
+
+    /// The title, kept as redundancy against a mistyped id.
+    pub fn title(mut self, title: impl Into<String>) -> Self {
+        self.title = title.into();
+        self
+    }
+
+    /// Publication year.
+    pub fn year(mut self, year: i64) -> Self {
+        self.year = Some(year);
+        self
+    }
+
+    /// Which version the numbers were read from. The same table differs between versions.
+    pub fn source_version(mut self, version: impl Into<String>) -> Self {
+        self.source_version = Some(version.into());
+        self
+    }
+
+    /// Starts a replication that reproduces this target.
+    pub fn target(self, target: Target) -> Replication {
+        Replication::new(self).target(target)
+    }
+}
+
+impl Target {
+    fn new(kind: TargetKind, target_id: impl Into<String>, label: impl Into<String>) -> Self {
+        Self {
+            target_id: target_id.into(),
+            kind,
+            label: label.into(),
+            panel: None,
+            row: None,
+            condition: None,
+        }
+    }
+
+    /// A table in the paper.
+    pub fn table(target_id: impl Into<String>, label: impl Into<String>) -> Self {
+        Self::new(TargetKind::Table, target_id, label)
+    }
+
+    /// A figure in the paper.
+    pub fn figure(target_id: impl Into<String>, label: impl Into<String>) -> Self {
+        Self::new(TargetKind::Figure, target_id, label)
+    }
+
+    /// A section of the paper.
+    pub fn section(target_id: impl Into<String>, label: impl Into<String>) -> Self {
+        Self::new(TargetKind::Section, target_id, label)
+    }
+
+    /// A claim made in the prose.
+    pub fn claim(target_id: impl Into<String>, label: impl Into<String>) -> Self {
+        Self::new(TargetKind::Claim, target_id, label)
+    }
+
+    /// Which panel of the figure.
+    pub fn panel(mut self, panel: impl Into<String>) -> Self {
+        self.panel = Some(panel.into());
+        self
+    }
+
+    /// Which row of the table.
+    pub fn row(mut self, row: impl Into<String>) -> Self {
+        self.row = Some(row.into());
+        self
+    }
+
+    /// The condition the row or panel stands for.
+    pub fn condition(mut self, condition: impl Into<String>) -> Self {
+        self.condition = Some(condition.into());
+        self
+    }
+}
+
+/// A replication under construction: the paper, its targets and the back-links.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Replication {
+    work: Work,
+    targets: Vec<Target>,
+    upstream_impl: Option<UpstreamImpl>,
+    obsidian_note: Option<String>,
+    jira: Vec<String>,
+}
+
+impl Replication {
+    /// Starts from the paper.
+    pub fn new(work: Work) -> Self {
+        Self {
+            work,
+            targets: Vec::new(),
+            upstream_impl: None,
+            obsidian_note: None,
+            jira: Vec::new(),
+        }
+    }
+
+    /// Adds a target experiment. One run may reproduce several.
+    pub fn target(mut self, target: Target) -> Self {
+        self.targets.push(target);
+        self
+    }
+
+    /// The authors' own implementation, when it was consulted.
+    pub fn upstream_impl(mut self, url: impl Into<String>, commit: Option<String>) -> Self {
+        self.upstream_impl = Some(UpstreamImpl {
+            url: url.into(),
+            commit,
+        });
+        self
+    }
+
+    /// Back-link to the replication note.
+    pub fn obsidian_note(mut self, note: impl Into<String>) -> Self {
+        self.obsidian_note = Some(note.into());
+        self
+    }
+
+    /// The JIRA issue this work belongs to.
+    pub fn jira(mut self, issue: impl Into<String>) -> Self {
+        self.jira.push(issue.into());
+        self
+    }
+}
+
+impl From<Work> for Replication {
+    fn from(work: Work) -> Self {
+        Self::new(work)
+    }
+}
+
+impl From<Replication> for Research {
+    fn from(r: Replication) -> Self {
+        Self {
+            is_replication: true,
+            work: Some(r.work),
+            targets: r.targets,
+            upstream_impl: r.upstream_impl,
+            obsidian_note: r.obsidian_note,
+            jira: r.jira,
+        }
+    }
+}
+
+impl Default for Research {
+    /// A run that is not reproducing anything.
+    fn default() -> Self {
+        Self {
+            is_replication: false,
+            work: None,
+            targets: Vec::new(),
+            upstream_impl: None,
+            obsidian_note: None,
+            jira: Vec::new(),
+        }
     }
 }

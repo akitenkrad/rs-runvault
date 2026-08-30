@@ -152,7 +152,10 @@ mod tests {
     #[test]
     fn keys_are_sorted_by_code_point() {
         let v = json!({"b": 1, "a": 2, "A": 3, "\u{3042}": 4});
-        assert_eq!(canonicalize(&v).unwrap(), "{\"A\":3,\"a\":2,\"b\":1,\"\u{3042}\":4}");
+        assert_eq!(
+            canonicalize(&v).unwrap(),
+            "{\"A\":3,\"a\":2,\"b\":1,\"\u{3042}\":4}"
+        );
     }
 
     #[test]
@@ -191,10 +194,7 @@ mod tests {
     fn strings_are_nfc_normalized_and_minimally_escaped() {
         // "が" written as か + combining dakuten normalizes to the precomposed form.
         let decomposed = json!({"k": "\u{304b}\u{3099}"});
-        assert_eq!(
-            canonicalize(&decomposed).unwrap(),
-            "{\"k\":\"\u{304c}\"}"
-        );
+        assert_eq!(canonicalize(&decomposed).unwrap(), "{\"k\":\"\u{304c}\"}");
 
         let escapes = json!({"k": "a\"b\\c\nd\u{1}e"});
         assert_eq!(
@@ -205,7 +205,10 @@ mod tests {
 
     #[test]
     fn non_ascii_is_not_escaped() {
-        assert_eq!(canonicalize(&json!("\u{7814}\u{7a76}")).unwrap(), "\"\u{7814}\u{7a76}\"");
+        assert_eq!(
+            canonicalize(&json!("\u{7814}\u{7a76}")).unwrap(),
+            "\"\u{7814}\u{7a76}\""
+        );
     }
 
     #[test]
