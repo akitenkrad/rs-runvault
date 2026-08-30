@@ -1,0 +1,149 @@
+{
+  "description": "Canonical JSON (design note §3.3). `canonical` is the exact string that gets hashed; `blake3` is BLAKE3 of its UTF-8 bytes.",
+  "cases": [
+    {
+      "name": "key-order-is-by-code-point",
+      "value": {
+        "b": 1,
+        "a": 2,
+        "A": 3,
+        "あ": 4
+      },
+      "canonical": "{\"A\":3,\"a\":2,\"b\":1,\"あ\":4}",
+      "blake3": "fe789d6310a6c63a1605bbc722c5dba9aeeac374371e9639783928ff0c93eac1"
+    },
+    {
+      "name": "code-point-order-puts-ascii-before-latin-1",
+      "value": {
+        "é": 1,
+        "z": 2,
+        "e": 3
+      },
+      "canonical": "{\"e\":3,\"z\":2,\"é\":1}",
+      "blake3": "49fefcaade12b17cc20921f94da999ffa748d1b38cec36be134fdfe44b4e1b44"
+    },
+    {
+      "name": "floats-keep-a-fractional-part-and-integers-do-not",
+      "value": {
+        "a": 1.0,
+        "b": -0.0,
+        "c": 0.5,
+        "d": 1,
+        "e": -3
+      },
+      "canonical": "{\"a\":1.0,\"b\":0.0,\"c\":0.5,\"d\":1,\"e\":-3}",
+      "blake3": "c486ee74f2434ba1f7abcb03460bbad6d172adc82cc9dd90d50a3a8515598199"
+    },
+    {
+      "name": "floats-never-use-exponent-notation",
+      "value": {
+        "big": 1e+21,
+        "small": 1e-07
+      },
+      "canonical": "{\"big\":1000000000000000000000.0,\"small\":0.0000001}",
+      "blake3": "b82be2ea8be1c5eaab822390a57f73815313a306d29ea15c64919a1f400bdae1"
+    },
+    {
+      "name": "nested-objects-are-sorted-and-arrays-keep-their-order",
+      "value": {
+        "z": [
+          3,
+          1,
+          {
+            "b": 2,
+            "a": 1
+          }
+        ],
+        "y": {
+          "n": null
+        }
+      },
+      "canonical": "{\"y\":{\"n\":null},\"z\":[3,1,{\"a\":1,\"b\":2}]}",
+      "blake3": "cd0f14d6f9ed394f16172ee92f9886233d3985518a7d913abde80733babbf5e4"
+    },
+    {
+      "name": "a-null-is-recorded",
+      "value": {
+        "a": 1,
+        "b": null
+      },
+      "canonical": "{\"a\":1,\"b\":null}",
+      "blake3": "0ac07ead18e044cadf363483a46fcd6c054685812da916950e4e2c86b970c33b"
+    },
+    {
+      "name": "a-missing-key-is-not-the-same-document",
+      "value": {
+        "a": 1
+      },
+      "canonical": "{\"a\":1}",
+      "blake3": "d59b6562d7c9b121bc9760873d787890ef4d429aad33a70b405baa0fa08a1f53"
+    },
+    {
+      "name": "only-quote-backslash-and-control-characters-are-escaped",
+      "value": {
+        "k": "a\"b\\c\nd\u0001ef"
+      },
+      "canonical": "{\"k\":\"a\\\"b\\\\c\\nd\\u0001ef\"}",
+      "blake3": "7f7b6c5659b2228980afe3bc87edb16011ea8a6fdc2d30f3570c33802c0c59f8"
+    },
+    {
+      "name": "the-short-escapes-are-used-where-json-has-them",
+      "value": {
+        "k": "\b\f\n\r\t\u000b"
+      },
+      "canonical": "{\"k\":\"\\b\\f\\n\\r\\t\\u000b\"}",
+      "blake3": "7ad3f0de72ca65a334cab75f962ed1659ed7ca64fd4a311ec139a393a8a6bcba"
+    },
+    {
+      "name": "delete-is-not-escaped",
+      "value": {
+        "k": "ab"
+      },
+      "canonical": "{\"k\":\"ab\"}",
+      "blake3": "2bf9164c461b26efbb18644a394b44b25e95ef670666aa331c69744dd1af18e1"
+    },
+    {
+      "name": "strings-and-keys-are-nfc-normalized",
+      "value": {
+        "が": "が"
+      },
+      "canonical": "{\"が\":\"が\"}",
+      "blake3": "8ce0d07992607d667139faea059bd89b8afbcf9edd793e8d99d26d603b7c7726"
+    },
+    {
+      "name": "non-ascii-is-not-escaped",
+      "value": {
+        "研究": "再現"
+      },
+      "canonical": "{\"研究\":\"再現\"}",
+      "blake3": "5bb49a5c3439fe0852c914926440ea8c0784706114c18e589186bb5531a54733"
+    },
+    {
+      "name": "an-empty-object-and-an-empty-array",
+      "value": {
+        "o": {},
+        "a": []
+      },
+      "canonical": "{\"a\":[],\"o\":{}}",
+      "blake3": "ebf16823b0267d8e8e1fe6d9a72e2f0b5a2f7f1fefd8b14dc6c6d3b51ea6d211"
+    },
+    {
+      "name": "booleans",
+      "value": {
+        "t": true,
+        "f": false
+      },
+      "canonical": "{\"f\":false,\"t\":true}",
+      "blake3": "0096b3fabb45fa8a5d48665b4937a9cb0060c38599886a6dbb8eaf5b0bd97b3b"
+    },
+    {
+      "name": "large-integers-stay-integers",
+      "value": {
+        "n": 9007199254740993,
+        "neg": -9007199254740993
+      },
+      "canonical": "{\"n\":9007199254740993,\"neg\":-9007199254740993}",
+      "blake3": "93762c399a71395b66214820912d4292e95b851e167dc2a908a3e88a58e8260a"
+    }
+  ]
+}

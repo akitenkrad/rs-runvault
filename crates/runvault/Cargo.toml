@@ -1,0 +1,35 @@
+[package]
+name = "runvault"
+description = "Plain-file experiment tracking for reproducible research"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[features]
+default = []
+# Emits JSON Schema from the Rust types so that tests can compare them with schema/v1/*.json.
+schema-gen = ["dep:schemars"]
+
+[dependencies]
+blake3.workspace = true
+chrono.workspace = true
+clap.workspace = true
+csv.workspace = true
+schemars = { workspace = true, optional = true }
+serde.workspace = true
+serde_json.workspace = true
+sysinfo.workspace = true
+thiserror.workspace = true
+ulid.workspace = true
+unicode-normalization.workspace = true
+
+[dev-dependencies]
+jsonschema.workspace = true
+tempfile.workspace = true
+
+[[bin]]
+name = "runvault"
+path = "src/bin/runvault.rs"

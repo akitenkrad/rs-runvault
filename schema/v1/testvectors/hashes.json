@@ -1,0 +1,197 @@
+{
+  "description": "The stack of three hashes. Every field of `expect` must be reproducible from `config` / `data` / `env` / `code` alone.",
+  "cases": [
+    {
+      "name": "schelling-main",
+      "comment": "The real schelling1971 config carries output_dir, which changes every run.",
+      "config": {
+        "schema_version": "1.0",
+        "run_uid": "01K3QZ8F7H9M2N4P6R8T0V2X4Z",
+        "runvault": {
+          "hash_exclude": [
+            "/output_dir",
+            "/log_level"
+          ],
+          "seed_pointers": [
+            "/seed"
+          ],
+          "determinism": {
+            "invariant_to": [
+              "/threads"
+            ]
+          },
+          "sync_include": [],
+          "sync_exclude": []
+        },
+        "parameters": {
+          "rows": 13,
+          "cols": 16,
+          "threshold": 0.5,
+          "seed": 42,
+          "threads": 8,
+          "log_level": "info",
+          "output_dir": "results/schelling/main_20260830_101500_9f2c41ab_3b1d"
+        }
+      },
+      "data": [
+        {
+          "role": "init",
+          "name": "schelling-grid",
+          "hash": {
+            "algorithm": "blake3",
+            "value": "7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b"
+          },
+          "hash_scope": "file",
+          "n": 208
+        }
+      ],
+      "env": {
+        "os": "macos",
+        "arch": "aarch64",
+        "rustc_version": "1.94.0",
+        "python_version": null,
+        "locks": [
+          {
+            "kind": "cargo",
+            "file": "lock/Cargo.lock",
+            "hash": {
+              "algorithm": "blake3",
+              "value": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            }
+          }
+        ]
+      },
+      "code": {
+        "git_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "git_dirty": true,
+        "dirty_hash": {
+          "algorithm": "blake3",
+          "value": "9999999999999999999999999999999999999999999999999999999999999999"
+        }
+      },
+      "expect": {
+        "config_canonical": "{\"cols\":16,\"rows\":13,\"threshold\":0.5}",
+        "env_hash": "5c3a566097c1ed3c1ea2fdc74bbdf2ed01c7aeaf5e00a019daf01f1adba5cc8a",
+        "config_hash": "4cfb57321e866e1b1526c74d60b0f7ec6afc5aba402c247ffd9437594b08d945",
+        "execution_hash": "c719e0274521eebebf07904fc11e05182385a95cb0411eab132d5871e58a60f8"
+      }
+    },
+    {
+      "name": "anomaly-detection-two-datasets",
+      "comment": "Datasets are sorted by (role, name); split and version are part of the identity.",
+      "config": {
+        "schema_version": "1.0",
+        "run_uid": "01K3QZ8F7H9M2N4P6R8T0V2X50",
+        "runvault": {
+          "hash_exclude": [],
+          "seed_pointers": [
+            "/model/seed",
+            "/split_seed"
+          ],
+          "determinism": {},
+          "sync_include": [],
+          "sync_exclude": []
+        },
+        "parameters": {
+          "window_sec": 60,
+          "model": {
+            "kind": "iforest",
+            "trees": 200,
+            "seed": 7
+          },
+          "split_seed": 11,
+          "features": [
+            "bytes",
+            "pkts",
+            "duration"
+          ]
+        }
+      },
+      "data": [
+        {
+          "role": "train",
+          "name": "cicids2017",
+          "dataset_id": "cicids2017@2017-07",
+          "split": "day1-4",
+          "n": 2830743,
+          "hash_scope": "dir_manifest",
+          "hash": {
+            "algorithm": "blake3",
+            "value": "7b1f1c0d9a4e2f6b8c3d5e7a9b1c3d5e7f9a1b3c5d7e9f1a3b5c7d9e1f3a5b7c"
+          }
+        },
+        {
+          "role": "eval",
+          "name": "internal-pcap",
+          "dataset_id": "internal-pcap@2026q2",
+          "n": 51200
+        }
+      ],
+      "env": {
+        "os": "linux",
+        "arch": "x86_64",
+        "rustc_version": null,
+        "python_version": "3.13.1",
+        "locks": [
+          {
+            "kind": "uv",
+            "file": "lock/uv.lock",
+            "hash": {
+              "algorithm": "blake3",
+              "value": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+            }
+          },
+          {
+            "kind": "cargo",
+            "file": "lock/Cargo.lock",
+            "hash": {
+              "algorithm": "blake3",
+              "value": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            }
+          }
+        ]
+      },
+      "code": {
+        "git_commit": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "git_dirty": false
+      },
+      "expect": {
+        "config_canonical": "{\"features\":[\"bytes\",\"pkts\",\"duration\"],\"model\":{\"kind\":\"iforest\",\"trees\":200},\"window_sec\":60}",
+        "env_hash": "11aa0da2bb1bc82a8b27b9cd31beac81de35caed9d0b73189f29f6a15a8249e0",
+        "config_hash": "fe6adcc0357d5c864336c6e87ee7dc730263cfced407b21a857fe741d80e2936",
+        "execution_hash": "84607d28711a52a7e9d7b7c92f9224289a68ecf2be8b5d0c832035e5127669a8"
+      }
+    },
+    {
+      "name": "manual-origin-no-code-no-data-no-locks",
+      "comment": "code = null still contributes three zero-length inputs; dropping them would change the number of inputs.",
+      "config": {
+        "schema_version": "1.0",
+        "run_uid": "01K3QZ8F7H9M2N4P6R8T0V2X51",
+        "runvault": {
+          "hash_exclude": [],
+          "seed_pointers": [],
+          "determinism": {},
+          "sync_include": [],
+          "sync_exclude": []
+        },
+        "parameters": {}
+      },
+      "data": [],
+      "env": {
+        "os": "macos",
+        "arch": "aarch64",
+        "rustc_version": null,
+        "python_version": null,
+        "locks": []
+      },
+      "code": null,
+      "expect": {
+        "config_canonical": "{}",
+        "env_hash": "09528317b767b3e54b15f91ddb7ca9d98ebb1cb9c7f5b0a3afbac039e52f237a",
+        "config_hash": "c9b0bf12be22da652a57799ec465c54568aef26b55e3d29d63ec74174cf5a16b",
+        "execution_hash": "9b80a7da5b96feecde0c87a6b8c4fee0cce494b376927ad1f9a2266353214333"
+      }
+    }
+  ]
+}

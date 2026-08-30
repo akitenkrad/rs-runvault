@@ -1,0 +1,55 @@
+{
+  "description": "Length-prefixed concatenation: each input becomes `<byte length in decimal> \":\" <input>`. Inputs are UTF-8 strings here.",
+  "cases": [
+    {
+      "name": "a-separator-would-be-ambiguous-but-a-length-is-not",
+      "inputs": [
+        "a:b",
+        "c"
+      ],
+      "joined": "3:a:b1:c",
+      "blake3": "426739159cbbf179e0e5c13589e106eddc9ad118e7ca364199944e9056e0d9c8"
+    },
+    {
+      "name": "the-other-split-of-the-same-characters",
+      "inputs": [
+        "a",
+        "b:c"
+      ],
+      "joined": "1:a3:b:c",
+      "blake3": "e9180093a417667728fbaffe638cc379f88dbe77bc1577886968113967fa2dca"
+    },
+    {
+      "name": "an-empty-input-still-occupies-a-slot",
+      "inputs": [
+        "",
+        "x"
+      ],
+      "joined": "0:1:x",
+      "blake3": "9545e97ff58e91144a5a3f9ac1071d526ea46cd6334fca8a2a8579539768ddca"
+    },
+    {
+      "name": "two-empty-inputs",
+      "inputs": [
+        "",
+        ""
+      ],
+      "joined": "0:0:",
+      "blake3": "6e67e6d3401b8d18e736703102616a3dc7312029dab1202d184f97ecc5b9828b"
+    },
+    {
+      "name": "no-inputs-at-all",
+      "inputs": [],
+      "joined": "",
+      "blake3": "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262"
+    },
+    {
+      "name": "the-length-is-in-bytes-not-characters",
+      "inputs": [
+        "あ"
+      ],
+      "joined": "3:あ",
+      "blake3": "19d50a31a20648c74f190ce6ac60d0d738a01e7f57ef88354967209924fed513"
+    }
+  ]
+}

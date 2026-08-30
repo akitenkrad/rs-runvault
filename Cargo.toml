@@ -1,0 +1,27 @@
+[workspace]
+members = ["crates/runvault"]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.94"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/akitenkrad/rs-runvault"
+authors = ["akitenkrad"]
+
+[workspace.dependencies]
+blake3 = "1.8"
+chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4", features = ["derive"] }
+csv = "1.4"
+schemars = "1.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sysinfo = { version = "0.37", default-features = false, features = ["system"] }
+thiserror = "2"
+ulid = "3"
+unicode-normalization = "0.1"
+
+jsonschema = "0.52"
+tempfile = "3"
