@@ -1,0 +1,265 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/akitenkrad/rs-runvault/schema/v1/runs.report.json",
+  "title": "runs.json (Obsidian dashboard payload)",
+  "description": "runvault report --obsidian が vault に書き出す索引の要約. CLI と Emera コンポーネントの契約",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "vocab_version",
+    "generated_at",
+    "freshness_hours",
+    "experiments",
+    "runs",
+    "warnings"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0"
+    },
+    "vocab_version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+$"
+    },
+    "generated_at": {
+      "$ref": "common.json#/$defs/timestamp"
+    },
+    "freshness_hours": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "これを超えて古ければ画面に «古い» と出す (既定 24)"
+    },
+    "experiments": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "experiment",
+          "repo_id",
+          "n_runs",
+          "n_finished",
+          "last_run_at",
+          "primary_metrics"
+        ],
+        "properties": {
+          "experiment": {
+            "$ref": "common.json#/$defs/slug"
+          },
+          "repo_id": {
+            "$ref": "common.json#/$defs/slug"
+          },
+          "n_runs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "n_finished": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "last_run_at": {
+            "anyOf": [
+              {
+                "$ref": "common.json#/$defs/timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "cost_usd": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "primary_metrics": {
+            "type": "array",
+            "maxItems": 3,
+            "items": {
+              "$ref": "common.json#/$defs/slug"
+            },
+            "description": "一覧に出す指標名. 実験ごとに決まる (§5.4)"
+          }
+        }
+      }
+    },
+    "runs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "run_key",
+          "experiment",
+          "subcommand",
+          "state",
+          "created_at",
+          "git_dirty",
+          "metrics"
+        ],
+        "properties": {
+          "run_uid": {
+            "anyOf": [
+              {
+                "$ref": "common.json#/$defs/run_uid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "legacy run では null"
+          },
+          "run_slug": {
+            "anyOf": [
+              {
+                "$ref": "common.json#/$defs/run_slug"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "experiment": {
+            "$ref": "common.json#/$defs/slug"
+          },
+          "subcommand": {
+            "anyOf": [
+              {
+                "$ref": "common.json#/$defs/slug"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "legacy では不明"
+          },
+          "state": {
+            "enum": [
+              "finished",
+              "failed",
+              "unfinished"
+            ]
+          },
+          "created_at": {
+            "$ref": "common.json#/$defs/timestamp"
+          },
+          "duration_sec": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "git_dirty": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "metrics": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "number"
+            }
+          },
+          "replication": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "additionalProperties": false,
+            "required": [
+              "title",
+              "targets"
+            ],
+            "properties": {
+              "title": {
+                "$ref": "common.json#/$defs/nonempty"
+              },
+              "work_id": {
+                "$ref": "common.json#/$defs/work_id"
+              },
+              "targets": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "diff": {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "additionalProperties": {
+                  "type": "number"
+                },
+                "description": "再現値 - 論文報告値"
+              }
+            }
+          },
+          "obsidian_note": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1
+          },
+          "jira": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^MYTASK-[0-9]+$"
+            }
+          },
+          "run_key": {
+            "$ref": "common.json#/$defs/nonempty",
+            "description": "索引の主キー. legacy は legacy:<repo_id>:<相対パス>"
+          }
+        }
+      }
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind",
+          "message"
+        ],
+        "properties": {
+          "kind": {
+            "enum": [
+              "env_split",
+              "dirty_runs",
+              "stale_lock",
+              "legacy_runs"
+            ]
+          },
+          "message": {
+            "$ref": "common.json#/$defs/nonempty"
+          },
+          "config_hash": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "n_run": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          }
+        }
+      }
+    }
+  }
+}

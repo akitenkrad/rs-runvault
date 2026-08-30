@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/akitenkrad/rs-runvault/schema/v1/manifest.row.json",
+  "title": "manifest.csv row",
+  "description": "finish() が artifacts/ と logs/ を走査して書く. 同期の有無は持たない (集約先から導出する)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["run_uid", "path", "algorithm", "digest", "bytes"],
+  "properties": {
+    "run_uid":   { "$ref": "common.json#/$defs/run_uid" },
+    "path":      { "$ref": "common.json#/$defs/relpath" },
+    "algorithm": { "enum": ["blake3", "sha256"] },
+    "digest":    { "$ref": "common.json#/$defs/digest_hex" },
+    "bytes":     { "type": "integer", "minimum": 0 }
+  }
+}

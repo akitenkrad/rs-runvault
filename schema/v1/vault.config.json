@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/akitenkrad/rs-runvault/schema/v1/vault.config.json",
+  "title": "runvault-vault.toml (aggregation repository declaration)",
+  "description": "集約リポジトリのルートに置く宣言. これが無い / 通らない場合 runvault sync は停止する (fail closed)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "visibility"],
+  "properties": {
+    "schema_version":   { "type": "string", "const": "1.0" },
+    "visibility":       { "const": "private",
+                          "description": "private 以外の値は許さない. public な集約先へは同期しない" },
+    "compress_over_mib": { "type": "number", "exclusiveMinimum": 0, "default": 10 },
+    "allow_internal":    { "type": "boolean", "default": false,
+                           "description": "visibility=internal の run を既定で受け入れるか" },
+    "note":              { "type": "string" }
+  }
+}

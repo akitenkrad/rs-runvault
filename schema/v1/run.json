@@ -1,0 +1,871 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/akitenkrad/rs-runvault/schema/v1/run.json",
+  "title": "runvault run metadata",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "vocab_version",
+    "runvault_version",
+    "run_uid",
+    "run_slug",
+    "repo_id",
+    "experiment",
+    "subcommand",
+    "domain",
+    "config_hash",
+    "execution_hash",
+    "created_at",
+    "origin",
+    "visibility",
+    "code",
+    "env",
+    "data",
+    "research"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0"
+    },
+    "vocab_version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+$",
+      "description": "vocabulary.toml の版"
+    },
+    "runvault_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "run_uid": {
+      "$ref": "common.json#/$defs/run_uid"
+    },
+    "run_slug": {
+      "$ref": "common.json#/$defs/run_slug"
+    },
+    "repo_id": {
+      "$ref": "common.json#/$defs/slug"
+    },
+    "experiment": {
+      "$ref": "common.json#/$defs/slug"
+    },
+    "subcommand": {
+      "$ref": "common.json#/$defs/slug"
+    },
+    "domain": {
+      "$ref": "common.json#/$defs/slug"
+    },
+    "config_hash": {
+      "$ref": "common.json#/$defs/digest_hex"
+    },
+    "execution_hash": {
+      "$ref": "common.json#/$defs/digest_hex"
+    },
+    "created_at": {
+      "$ref": "common.json#/$defs/timestamp"
+    },
+    "cli_args": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "origin": {
+      "enum": [
+        "code",
+        "manual",
+        "external"
+      ]
+    },
+    "visibility": {
+      "enum": [
+        "internal",
+        "public"
+      ]
+    },
+    "code": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "required": [
+        "git_commit",
+        "git_dirty"
+      ],
+      "properties": {
+        "git_remote": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "git_branch": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "git_commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "git_dirty": {
+          "type": "boolean"
+        },
+        "dirty_hash": {
+          "anyOf": [
+            {
+              "$ref": "common.json#/$defs/hash"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "git_dirty=true のとき, 作業ツリーの差分 (git diff HEAD) のハッシュ"
+        },
+        "repo_relpath": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "locks": {
+          "type": "array",
+          "description": "同梱したロックファイル. 実体は run 直下の lock/ に置く",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "kind",
+              "hash",
+              "file"
+            ],
+            "properties": {
+              "kind": {
+                "enum": [
+                  "cargo",
+                  "uv",
+                  "poetry",
+                  "pip",
+                  "other"
+                ]
+              },
+              "hash": {
+                "$ref": "common.json#/$defs/hash"
+              },
+              "file": {
+                "$ref": "common.json#/$defs/relpath"
+              }
+            }
+          }
+        }
+      },
+      "allOf": [
+        {
+          "$comment": "dirty なら差分のハッシュを持つ. 無いと異なる作業ツリーが同じ execution_hash になる",
+          "if": {
+            "properties": {
+              "git_dirty": {
+                "const": true
+              }
+            },
+            "required": [
+              "git_dirty"
+            ]
+          },
+          "then": {
+            "required": [
+              "dirty_hash"
+            ],
+            "properties": {
+              "dirty_hash": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "env": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "env_hash",
+        "host",
+        "os",
+        "arch"
+      ],
+      "properties": {
+        "env_hash": {
+          "$ref": "common.json#/$defs/digest_hex"
+        },
+        "host": {
+          "$ref": "common.json#/$defs/nonempty"
+        },
+        "os": {
+          "$ref": "common.json#/$defs/nonempty"
+        },
+        "arch": {
+          "$ref": "common.json#/$defs/nonempty"
+        },
+        "rustc_version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "python_version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "rng": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "master_seed": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "replicate_index": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        }
+      }
+    },
+    "llm": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "required": [
+        "provider",
+        "model_snapshot"
+      ],
+      "properties": {
+        "provider": {
+          "$ref": "common.json#/$defs/nonempty"
+        },
+        "model_snapshot": {
+          "$ref": "common.json#/$defs/nonempty"
+        },
+        "temperature": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "system_prompt_hash": {
+          "anyOf": [
+            {
+              "$ref": "common.json#/$defs/hash"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "data": {
+      "type": "array",
+      "description": "使用したデータ. 外部データを使わない run は空配列. 未記入とは区別する. (role, name) は run 内で一意",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "role",
+          "name"
+        ],
+        "properties": {
+          "role": {
+            "$ref": "common.json#/$defs/slug"
+          },
+          "name": {
+            "$ref": "common.json#/$defs/slug"
+          },
+          "dataset_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1,
+            "description": "版を含む安定 ID"
+          },
+          "version": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1
+          },
+          "hash": {
+            "anyOf": [
+              {
+                "$ref": "common.json#/$defs/hash"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hash_scope": {
+            "enum": [
+              "file",
+              "dir_manifest",
+              null
+            ],
+            "description": "dir_manifest = パス昇順の (相対パス, 内容ハッシュ) 列をハッシュしたもの"
+          },
+          "n": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "uri": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1
+          },
+          "split": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1
+          }
+        },
+        "anyOf": [
+          {
+            "required": [
+              "hash"
+            ],
+            "properties": {
+              "hash": {
+                "type": "object"
+              }
+            }
+          },
+          {
+            "required": [
+              "dataset_id"
+            ],
+            "properties": {
+              "dataset_id": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "required": [
+              "uri"
+            ],
+            "properties": {
+              "uri": {
+                "type": "string"
+              }
+            }
+          }
+        ],
+        "allOf": [
+          {
+            "$comment": "hash と hash_scope は同時に存在する. 片方だけでは何をハッシュしたか決まらない",
+            "if": {
+              "required": [
+                "hash"
+              ],
+              "properties": {
+                "hash": {
+                  "type": "object"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "hash_scope"
+              ],
+              "properties": {
+                "hash_scope": {
+                  "enum": [
+                    "file",
+                    "dir_manifest"
+                  ]
+                }
+              }
+            },
+            "else": {
+              "properties": {
+                "hash_scope": {
+                  "type": "null"
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    "lineage": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "sweep_id": {
+          "anyOf": [
+            {
+              "$ref": "common.json#/$defs/slug"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "parent_run_uid": {
+          "anyOf": [
+            {
+              "$ref": "common.json#/$defs/run_uid"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "sweep 親 run. sweep_id と対で持つ"
+        },
+        "resumed_from": {
+          "anyOf": [
+            {
+              "$ref": "common.json#/$defs/run_uid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "derived_from": {
+          "anyOf": [
+            {
+              "$ref": "common.json#/$defs/run_uid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "$comment": "resume と derive は同時に成立しない. 続きなのか作り直しなのかが決まらなくなる",
+          "if": {
+            "required": [
+              "resumed_from"
+            ],
+            "properties": {
+              "resumed_from": {
+                "type": "string"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "derived_from": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ],
+      "dependentSchemas": {
+        "parent_run_uid": {
+          "required": [
+            "sweep_id"
+          ],
+          "properties": {
+            "sweep_id": {
+              "$ref": "common.json#/$defs/slug"
+            }
+          },
+          "$comment": "親を指すなら sweep_id は非 null で必須. null では sweep に属していない"
+        }
+      }
+    },
+    "research": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "is_replication"
+      ],
+      "properties": {
+        "is_replication": {
+          "type": "boolean"
+        },
+        "work": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": false,
+          "required": [
+            "work_id",
+            "title"
+          ],
+          "properties": {
+            "work_id": {
+              "$ref": "common.json#/$defs/work_id"
+            },
+            "doi": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "minLength": 1
+            },
+            "arxiv_id": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "minLength": 1
+            },
+            "paper_id": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "pattern": "^P[0-9]{8}$"
+            },
+            "title": {
+              "$ref": "common.json#/$defs/nonempty"
+            },
+            "year": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 1500,
+              "maximum": 2200
+            },
+            "source_version": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "minLength": 1,
+              "description": "arXiv v2 / published / preprint など. 版で数値が変わるため必須"
+            }
+          }
+        },
+        "targets": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "target_id",
+              "kind",
+              "label"
+            ],
+            "properties": {
+              "target_id": {
+                "$ref": "common.json#/$defs/slug"
+              },
+              "kind": {
+                "enum": [
+                  "table",
+                  "figure",
+                  "section",
+                  "claim"
+                ]
+              },
+              "label": {
+                "$ref": "common.json#/$defs/nonempty"
+              },
+              "panel": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "minLength": 1
+              },
+              "row": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "minLength": 1
+              },
+              "condition": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "minLength": 1
+              }
+            }
+          }
+        },
+        "upstream_impl": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": false,
+          "required": [
+            "url"
+          ],
+          "properties": {
+            "url": {
+              "$ref": "common.json#/$defs/nonempty"
+            },
+            "commit": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "minLength": 1
+            }
+          }
+        },
+        "obsidian_note": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "jira": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^MYTASK-[0-9]+$"
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "is_replication": {
+                "const": true
+              }
+            },
+            "required": [
+              "is_replication"
+            ]
+          },
+          "then": {
+            "required": [
+              "work",
+              "targets",
+              "obsidian_note"
+            ],
+            "properties": {
+              "work": {
+                "type": "object",
+                "required": [
+                  "work_id",
+                  "title",
+                  "source_version"
+                ],
+                "properties": {
+                  "source_version": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "anyOf": [
+                  {
+                    "required": [
+                      "doi"
+                    ],
+                    "properties": {
+                      "doi": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  {
+                    "required": [
+                      "arxiv_id"
+                    ],
+                    "properties": {
+                      "arxiv_id": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  {
+                    "required": [
+                      "paper_id"
+                    ],
+                    "properties": {
+                      "paper_id": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                ]
+              },
+              "targets": {
+                "type": "array",
+                "minItems": 1
+              },
+              "obsidian_note": {
+                "$ref": "common.json#/$defs/nonempty"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "ext": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": true
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "origin": {
+            "const": "code"
+          }
+        },
+        "required": [
+          "origin"
+        ]
+      },
+      "then": {
+        "properties": {
+          "code": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "domain": {
+            "const": "simulation"
+          }
+        },
+        "required": [
+          "domain"
+        ]
+      },
+      "then": {
+        "required": [
+          "rng"
+        ],
+        "properties": {
+          "rng": {
+            "type": "object",
+            "required": [
+              "master_seed"
+            ],
+            "properties": {
+              "master_seed": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "domain": {
+            "const": "llm-safety"
+          }
+        },
+        "required": [
+          "domain"
+        ]
+      },
+      "then": {
+        "required": [
+          "llm"
+        ],
+        "properties": {
+          "llm": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    {
+      "$comment": "異常通信検知は学習データと評価データの両方を同定できないと再現できない",
+      "if": {
+        "properties": {
+          "domain": {
+            "const": "anomaly-detection"
+          }
+        },
+        "required": [
+          "domain"
+        ]
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "array",
+            "allOf": [
+              {
+                "contains": {
+                  "type": "object",
+                  "properties": {
+                    "role": {
+                      "const": "train"
+                    }
+                  },
+                  "required": [
+                    "role"
+                  ]
+                }
+              },
+              {
+                "contains": {
+                  "type": "object",
+                  "properties": {
+                    "role": {
+                      "const": "eval"
+                    }
+                  },
+                  "required": [
+                    "role"
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

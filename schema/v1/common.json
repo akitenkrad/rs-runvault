@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/akitenkrad/rs-runvault/schema/v1/common.json",
+  "title": "runvault shared definitions",
+  "$defs": {
+    "slug": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$",
+      "description": "パス要素になりうる識別子. NFC 正規化済みの小文字英数字と . _ - のみ. 64 文字以内"
+    },
+    "run_uid": {
+      "type": "string",
+      "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+      "description": "ULID. 先頭文字は 0-7 (48bit の時刻部が 26 文字に収まる範囲). 全ファイル・全索引の主キー"
+    },
+    "run_slug": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{0,63}_[0-9]{8}_[0-9]{6}_[0-9a-f]{8}_[0-9a-f]{4}(-[0-9]+)?$",
+      "description": "ディレクトリ名. 人間向けであり一意性は保証しない"
+    },
+    "hash": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["algorithm", "value"],
+      "properties": {
+        "algorithm": { "enum": ["blake3", "sha256"] },
+        "value": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "digest_hex": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "timestamp": { "type": "string", "format": "date-time" },
+    "json_pointer": { "type": "string", "pattern": "^(/[^/~]*(~[01][^/~]*)*)+$" },
+    "nonempty": { "type": "string", "minLength": 1 },
+    "relpath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?!.*(^|/)\\.\\.(/|$)).+$",
+      "description": "run ディレクトリからの相対パス. 先頭の / と .. を含むパスを禁じる"
+    },
+    "work_id": {
+      "type": "string",
+      "pattern": "^(doi:10\\.[0-9]{4,9}/\\S+|arxiv:[0-9]{4}\\.[0-9]{4,5}(v[0-9]+)?|paperid:P[0-9]{8})$",
+      "description": "論文の正規化識別子. doi: / arxiv: / paperid: のいずれかの接頭辞を持つ"
+    }
+  }
+}

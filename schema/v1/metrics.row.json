@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/akitenkrad/rs-runvault/schema/v1/metrics.row.json",
+  "title": "metrics.csv row",
+  "description": "CSV は UTF-8 (BOM なし). 欠損は空文字のみ (NA/NaN/null と書かない). 主キーは (run_uid, name, step, step_unit, scope)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["run_uid", "step", "step_unit", "scope", "name", "value"],
+  "properties": {
+    "run_uid":   { "$ref": "common.json#/$defs/run_uid" },
+    "step":      { "type": ["integer", "null"], "minimum": 0, "description": "時系列でない指標では空" },
+    "step_unit": { "anyOf": [{ "$ref": "common.json#/$defs/slug" }, { "type": "null" }] },
+    "scope":     { "$ref": "common.json#/$defs/slug", "description": "値の集約粒度: run / trial / agent / flow など" },
+    "name":      { "$ref": "common.json#/$defs/slug" },
+    "value":     { "type": "number", "description": "NaN / Inf は書かない. 欠測は行を書かない" }
+  },
+  "allOf": [
+    {
+      "$comment": "step と step_unit は両方あるか両方無いか. 片方だけの行は時間軸の意味が決まらない",
+      "if": { "properties": { "step": { "type": "integer" } }, "required": ["step"] },
+      "then": { "properties": { "step_unit": { "$ref": "common.json#/$defs/slug" } }, "required": ["step_unit"] },
+      "else": { "properties": { "step_unit": { "type": "null" } } }
+    }
+  ]
+}

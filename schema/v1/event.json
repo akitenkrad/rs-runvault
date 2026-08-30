@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/akitenkrad/rs-runvault/schema/v1/event.json",
+  "title": "runvault event record",
+  "type": "object",
+  "required": ["schema", "run_uid", "ts"],
+  "properties": {
+    "schema": {
+      "type": "string",
+      "pattern": "^(observation|terminal|note|x\\.[a-z0-9][a-z0-9._-]{0,63}\\.[a-z0-9][a-z0-9._-]{0,63})$",
+      "description": "コア語彙 (observation / terminal / note) か, 実験固有の x.<repo_id>.<name>"
+    },
+    "run_uid":  { "$ref": "common.json#/$defs/run_uid" },
+    "ts":       { "$ref": "common.json#/$defs/timestamp" },
+    "unit_id":  { "type": "string", "minLength": 1, "description": "予約語: 観測の主体" },
+    "t":        { "type": "number", "minimum": 0, "description": "予約語: 主体ごとの経過" },
+    "t_unit":   { "$ref": "common.json#/$defs/slug", "description": "予約語: t の単位" },
+    "outcome":  { "type": "string", "minLength": 1, "description": "予約語: 終端での結果" },
+    "censored": { "type": "boolean", "description": "予約語: 右側打ち切りか" },
+    "budget":   { "type": ["number", "null"], "minimum": 0, "description": "予約語: 打ち切り閾値" }
+  },
+  "allOf": [
+    {
+      "$comment": "コア語彙 observation: 到達時間の観測 1 点",
+      "if": { "properties": { "schema": { "const": "observation" } }, "required": ["schema"] },
+      "then": { "required": ["schema", "run_uid", "ts", "unit_id", "t", "t_unit"] }
+    },
+    {
+      "$comment": "コア語彙 terminal: 到達時間の終端行. 生存時間解析はこの行だけで組める",
+      "if": { "properties": { "schema": { "const": "terminal" } }, "required": ["schema"] },
+      "then": {
+        "required": ["schema", "run_uid", "ts", "unit_id", "t", "t_unit", "outcome", "censored", "budget"],
+        "properties": { "budget": { "type": "number" } }
+      }
+    }
+  ],
+  "$defs": {
+    "survival_observation": {
+      "description": "profile: schema=observation を明示的に要求する",
+      "allOf": [{ "$ref": "#" }],
+      "properties": { "schema": { "const": "observation" } },
+      "required": ["schema", "run_uid", "ts", "unit_id", "t", "t_unit"]
+    },
+    "survival_terminal": {
+      "description": "profile: schema=terminal を明示的に要求する",
+      "allOf": [{ "$ref": "#" }],
+      "properties": { "schema": { "const": "terminal" }, "budget": { "type": "number" } },
+      "required": ["schema", "run_uid", "ts", "unit_id", "t", "t_unit", "outcome", "censored", "budget"]
+    }
+  }
+}

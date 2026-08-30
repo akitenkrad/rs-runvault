@@ -1,0 +1,145 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/akitenkrad/rs-runvault/schema/v1/status.json",
+  "title": "runvault run status",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_uid",
+    "state",
+    "started_at",
+    "finished_at",
+    "duration_sec"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0"
+    },
+    "run_uid": {
+      "$ref": "common.json#/$defs/run_uid"
+    },
+    "state": {
+      "enum": [
+        "finished",
+        "failed"
+      ]
+    },
+    "started_at": {
+      "$ref": "common.json#/$defs/timestamp"
+    },
+    "finished_at": {
+      "$ref": "common.json#/$defs/timestamp"
+    },
+    "duration_sec": {
+      "type": "number",
+      "minimum": 0,
+      "description": "実行時間の正本. metrics 側に重複して持たせない"
+    },
+    "exit_code": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "collision_index": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 2
+    },
+    "error": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "message"
+      ],
+      "properties": {
+        "kind": {
+          "$ref": "common.json#/$defs/nonempty"
+        },
+        "message": {
+          "$ref": "common.json#/$defs/nonempty"
+        }
+      }
+    },
+    "counts": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "metrics": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "events": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "artifacts": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "state": {
+            "const": "failed"
+          }
+        },
+        "required": [
+          "state"
+        ]
+      },
+      "then": {
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    {
+      "$comment": "finished なら error は無く exit_code は 0. 成功と失敗の記録が混ざらないようにする",
+      "if": {
+        "properties": {
+          "state": {
+            "const": "finished"
+          }
+        },
+        "required": [
+          "state"
+        ]
+      },
+      "then": {
+        "properties": {
+          "error": {
+            "type": "null"
+          },
+          "exit_code": {
+            "enum": [
+              0,
+              null
+            ],
+            "$comment": "未該当 (手作業の run など) は null. 非 0 は failed でしか持てない"
+          }
+        }
+      }
+    }
+  ]
+}

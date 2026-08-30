@@ -1,0 +1,565 @@
+{
+  "$comment": "runvault query --refresh が作る index/*.parquet の平坦化スキーマ. §5.2 の SQL はこの列だけを参照する",
+  "version": "1.0",
+  "tables": {
+    "runs": {
+      "primary_key": [
+        "run_key"
+      ],
+      "columns": [
+        {
+          "name": "run_key",
+          "type": "string",
+          "nullable": false,
+          "note": "主キー. 正規の run は run_uid, legacy は legacy:<repo_id>:<相対パス>"
+        },
+        {
+          "name": "run_uid",
+          "type": "string",
+          "nullable": true,
+          "note": "legacy run では null"
+        },
+        {
+          "name": "run_slug",
+          "type": "string",
+          "nullable": true
+        },
+        {
+          "name": "schema_version",
+          "type": "string",
+          "nullable": true,
+          "note": "legacy run は null"
+        },
+        {
+          "name": "vocab_version",
+          "type": "string",
+          "nullable": true
+        },
+        {
+          "name": "repo_id",
+          "type": "string",
+          "nullable": false
+        },
+        {
+          "name": "experiment",
+          "type": "string",
+          "nullable": false
+        },
+        {
+          "name": "subcommand",
+          "type": "string",
+          "nullable": true
+        },
+        {
+          "name": "domain",
+          "type": "string",
+          "nullable": true
+        },
+        {
+          "name": "config_hash",
+          "type": "string",
+          "nullable": true
+        },
+        {
+          "name": "execution_hash",
+          "type": "string",
+          "nullable": true
+        },
+        {
+          "name": "env_hash",
+          "type": "string",
+          "nullable": true
+        },
+        {
+          "name": "created_at",
+          "type": "timestamp",
+          "nullable": true
+        },
+        {
+          "name": "origin",
+          "type": "string",
+          "nullable": true
+        },
+        {
+          "name": "visibility",
+          "type": "string",
+          "nullable": true
+        },
+        {
+          "name": "git_remote",
+          "type": "string",
+          "nullable": true
+        },
+        {
+          "name": "git_branch",
+          "type": "string",
+          "nullable": true
+        },
+        {
+          "name": "git_commit",
+          "type": "string",
+          "nullable": true
+        },
+        {
+          "name": "git_dirty",
+          "type": "boolean",
+          "nullable": true
+        },
+        {
+          "name": "dirty_hash",
+          "type": "string",
+          "nullable": true
+        },
+        {
+          "name": "repo_relpath",
+          "type": "string",
+          "nullable": true
+        },
+        {
+          "name": "master_seed",
+          "type": "bigint",
+          "nullable": true
+        },
+        {
+          "name": "replicate_index",
+          "type": "bigint",
+          "nullable": true
+        },
+        {
+          "name": "host",
+          "type": "string",
+          "nullable": true
+        },
+        {
+          "name": "os",
+          "type": "string",
+          "nullable": true
+        },
+        {
+          "name": "arch",
+          "type": "string",
+          "nullable": true
+        },
+        {
+          "name": "rustc_version",
+          "type": "string",
+          "nullable": true
+        },
+        {
+          "name": "python_version",
+          "type": "string",
+          "nullable": true
+        },
+        {
+          "name": "llm_provider",
+          "type": "string",
+          "nullable": true
+        },
+        {
+          "name": "llm_model_snapshot",
+          "type": "string",
+          "nullable": true
+        },
+        {
+          "name": "sweep_id",
+          "type": "string",
+          "nullable": true
+        },
+        {
+          "name": "parent_run_uid",
+          "type": "string",
+          "nullable": true
+        },
+        {
+          "name": "resumed_from",
+          "type": "string",
+          "nullable": true
+        },
+        {
+          "name": "derived_from",
+          "type": "string",
+          "nullable": true
+        },
+        {
+          "name": "is_replication",
+          "type": "boolean",
+          "nullable": true
+        },
+        {
+          "name": "work_id",
+          "type": "string",
+          "nullable": true
+        },
+        {
+          "name": "doi",
+          "type": "string",
+          "nullable": true
+        },
+        {
+          "name": "arxiv_id",
+          "type": "string",
+          "nullable": true
+        },
+        {
+          "name": "paper_id",
+          "type": "string",
+          "nullable": true
+        },
+        {
+          "name": "title",
+          "type": "string",
+          "nullable": true
+        },
+        {
+          "name": "year",
+          "type": "bigint",
+          "nullable": true
+        },
+        {
+          "name": "source_version",
+          "type": "string",
+          "nullable": true
+        },
+        {
+          "name": "obsidian_note",
+          "type": "string",
+          "nullable": true
+        },
+        {
+          "name": "state",
+          "type": "string",
+          "nullable": true,
+          "note": "finished / failed / unfinished (status.json が無い)"
+        },
+        {
+          "name": "started_at",
+          "type": "timestamp",
+          "nullable": true
+        },
+        {
+          "name": "finished_at",
+          "type": "timestamp",
+          "nullable": true
+        },
+        {
+          "name": "duration_sec",
+          "type": "double",
+          "nullable": true
+        },
+        {
+          "name": "exit_code",
+          "type": "bigint",
+          "nullable": true
+        },
+        {
+          "name": "collision_index",
+          "type": "bigint",
+          "nullable": true
+        },
+        {
+          "name": "error_kind",
+          "type": "string",
+          "nullable": true
+        },
+        {
+          "name": "n_metrics",
+          "type": "bigint",
+          "nullable": true
+        },
+        {
+          "name": "n_events",
+          "type": "bigint",
+          "nullable": true
+        },
+        {
+          "name": "n_artifacts",
+          "type": "bigint",
+          "nullable": true
+        }
+      ]
+    },
+    "run_data": {
+      "primary_key": [
+        "run_key",
+        "role",
+        "name"
+      ],
+      "columns": [
+        {
+          "name": "run_key",
+          "type": "string",
+          "nullable": false
+        },
+        {
+          "name": "run_uid",
+          "type": "string",
+          "nullable": true
+        },
+        {
+          "name": "role",
+          "type": "string",
+          "nullable": false
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "nullable": false
+        },
+        {
+          "name": "dataset_id",
+          "type": "string",
+          "nullable": true
+        },
+        {
+          "name": "version",
+          "type": "string",
+          "nullable": true
+        },
+        {
+          "name": "hash_algorithm",
+          "type": "string",
+          "nullable": true
+        },
+        {
+          "name": "hash_value",
+          "type": "string",
+          "nullable": true
+        },
+        {
+          "name": "hash_scope",
+          "type": "string",
+          "nullable": true
+        },
+        {
+          "name": "n",
+          "type": "bigint",
+          "nullable": true
+        },
+        {
+          "name": "uri",
+          "type": "string",
+          "nullable": true
+        },
+        {
+          "name": "split",
+          "type": "string",
+          "nullable": true
+        }
+      ]
+    },
+    "run_targets": {
+      "primary_key": [
+        "run_key",
+        "target_id"
+      ],
+      "columns": [
+        {
+          "name": "run_key",
+          "type": "string",
+          "nullable": false
+        },
+        {
+          "name": "run_uid",
+          "type": "string",
+          "nullable": true
+        },
+        {
+          "name": "target_id",
+          "type": "string",
+          "nullable": false
+        },
+        {
+          "name": "kind",
+          "type": "string",
+          "nullable": false
+        },
+        {
+          "name": "label",
+          "type": "string",
+          "nullable": false
+        },
+        {
+          "name": "panel",
+          "type": "string",
+          "nullable": true
+        },
+        {
+          "name": "row",
+          "type": "string",
+          "nullable": true
+        },
+        {
+          "name": "condition",
+          "type": "string",
+          "nullable": true
+        }
+      ]
+    },
+    "run_jira": {
+      "primary_key": [
+        "run_key",
+        "issue_key"
+      ],
+      "columns": [
+        {
+          "name": "run_key",
+          "type": "string",
+          "nullable": false
+        },
+        {
+          "name": "run_uid",
+          "type": "string",
+          "nullable": true
+        },
+        {
+          "name": "issue_key",
+          "type": "string",
+          "nullable": false
+        }
+      ]
+    },
+    "metrics": {
+      "primary_key": [
+        "run_key",
+        "name",
+        "step",
+        "step_unit",
+        "scope"
+      ],
+      "columns": [
+        {
+          "name": "run_key",
+          "type": "string",
+          "nullable": false
+        },
+        {
+          "name": "run_uid",
+          "type": "string",
+          "nullable": true
+        },
+        {
+          "name": "step",
+          "type": "bigint",
+          "nullable": true
+        },
+        {
+          "name": "step_unit",
+          "type": "string",
+          "nullable": true
+        },
+        {
+          "name": "scope",
+          "type": "string",
+          "nullable": false
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "nullable": false
+        },
+        {
+          "name": "value",
+          "type": "double",
+          "nullable": false
+        }
+      ],
+      "null_equality": true
+    },
+    "reference": {
+      "primary_key": [
+        "run_key",
+        "name",
+        "step",
+        "step_unit",
+        "scope",
+        "target_id"
+      ],
+      "columns": [
+        {
+          "name": "run_key",
+          "type": "string",
+          "nullable": false
+        },
+        {
+          "name": "run_uid",
+          "type": "string",
+          "nullable": true
+        },
+        {
+          "name": "step",
+          "type": "bigint",
+          "nullable": true
+        },
+        {
+          "name": "step_unit",
+          "type": "string",
+          "nullable": true
+        },
+        {
+          "name": "scope",
+          "type": "string",
+          "nullable": false
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "nullable": false
+        },
+        {
+          "name": "value",
+          "type": "double",
+          "nullable": false
+        },
+        {
+          "name": "target_id",
+          "type": "string",
+          "nullable": false
+        },
+        {
+          "name": "source",
+          "type": "string",
+          "nullable": false
+        }
+      ],
+      "null_equality": true
+    },
+    "manifest": {
+      "primary_key": [
+        "run_key",
+        "path"
+      ],
+      "columns": [
+        {
+          "name": "run_key",
+          "type": "string",
+          "nullable": false
+        },
+        {
+          "name": "run_uid",
+          "type": "string",
+          "nullable": true
+        },
+        {
+          "name": "path",
+          "type": "string",
+          "nullable": false
+        },
+        {
+          "name": "algorithm",
+          "type": "string",
+          "nullable": false
+        },
+        {
+          "name": "digest",
+          "type": "string",
+          "nullable": false
+        },
+        {
+          "name": "bytes",
+          "type": "bigint",
+          "nullable": false
+        }
+      ]
+    }
+  }
+}

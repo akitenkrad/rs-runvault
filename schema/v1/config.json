@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/akitenkrad/rs-runvault/schema/v1/config.json",
+  "title": "runvault config envelope",
+  "description": "ハッシュ対象は /parameters のみ. run ごとに変わる run_uid と制御用の runvault ブロックを /parameters と同じ階層に混ぜないためのエンベロープ",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_uid",
+    "runvault",
+    "parameters"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0"
+    },
+    "run_uid": {
+      "$ref": "common.json#/$defs/run_uid"
+    },
+    "runvault": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "hash_exclude": {
+          "type": "array",
+          "items": {
+            "$ref": "common.json#/$defs/json_pointer"
+          },
+          "description": "/parameters を基点とした JSON Pointer"
+        },
+        "seed_pointers": {
+          "type": "array",
+          "items": {
+            "$ref": "common.json#/$defs/json_pointer"
+          },
+          "description": "乱数シードの所在. config_hash からは除き execution_hash には含める"
+        },
+        "determinism": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "invariant_to": {
+              "type": "array",
+              "items": {
+                "$ref": "common.json#/$defs/json_pointer"
+              },
+              "description": "結果を変えないと実験側が宣言したキー. これだけが条件付き除外の対象"
+            }
+          }
+        },
+        "sync_include": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "sync_exclude": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "parameters": {
+      "type": "object",
+      "description": "実験条件. 中身は分野ごとに自由"
+    }
+  }
+}

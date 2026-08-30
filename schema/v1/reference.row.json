@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/akitenkrad/rs-runvault/schema/v1/reference.row.json",
+  "title": "reference.csv row",
+  "description": "論文の報告値. metrics.csv の列に target_id と source を足したもの. 再現実験の run にだけ存在する",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["run_uid", "step", "step_unit", "scope", "name", "value", "target_id", "source"],
+  "properties": {
+    "run_uid":   { "$ref": "common.json#/$defs/run_uid" },
+    "step":      { "type": ["integer", "null"], "minimum": 0 },
+    "step_unit": { "anyOf": [{ "$ref": "common.json#/$defs/slug" }, { "type": "null" }] },
+    "scope":     { "$ref": "common.json#/$defs/slug" },
+    "name":      { "$ref": "common.json#/$defs/slug" },
+    "value":     { "type": "number" },
+    "target_id": { "$ref": "common.json#/$defs/slug", "description": "research.targets[].target_id を指す" },
+    "source":    { "$ref": "common.json#/$defs/nonempty", "description": "値の出典 (Table 3 row 2 など)" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "step": { "type": "integer" } }, "required": ["step"] },
+      "then": { "properties": { "step_unit": { "$ref": "common.json#/$defs/slug" } }, "required": ["step_unit"] },
+      "else": { "properties": { "step_unit": { "type": "null" } } }
+    }
+  ]
+}

@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/akitenkrad/rs-runvault/schema/v1/sync.json",
+  "title": "sync.json (aggregation receipt)",
+  "description": "runvault sync が集約先の run ディレクトリに置く受領証. 何をいつどの形で送ったかの正本",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "run_uid", "run_key", "generation", "synced_at", "source", "files"],
+  "properties": {
+    "schema_version": { "type": "string", "const": "1.0" },
+    "run_uid":  { "anyOf": [{ "$ref": "common.json#/$defs/run_uid" }, { "type": "null" }],
+                  "description": "legacy run では null" },
+    "run_key":  { "$ref": "common.json#/$defs/nonempty" },
+    "generation": { "type": "integer", "minimum": 1,
+                    "description": "同じ run を何度目に同期したか. 再同期のたびに 1 増える" },
+    "synced_at": { "$ref": "common.json#/$defs/timestamp" },
+    "verified":  { "type": "boolean", "description": "runvault verify --deep に通ったか. false では同期しない" },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["host", "repo_id", "path"],
+      "properties": {
+        "host":    { "$ref": "common.json#/$defs/nonempty" },
+        "repo_id": { "$ref": "common.json#/$defs/slug" },
+        "path":    { "$ref": "common.json#/$defs/nonempty", "description": "同期元の run ディレクトリ" }
+      }
+    },
+    "files": {
+      "type": "array",
+      "description": "集約先に置いたファイル. 圧縮したものは stored_path が .zst になる",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "stored_path", "compression", "source", "stored"],
+        "properties": {
+          "path":        { "$ref": "common.json#/$defs/relpath", "description": "同期元での相対パス" },
+          "stored_path": { "$ref": "common.json#/$defs/relpath", "description": "集約先での相対パス" },
+          "compression": { "enum": ["none", "zstd"] },
+          "source": {
+            "type": "object", "additionalProperties": false, "required": ["hash", "bytes"],
+            "properties": {
+              "hash":  { "$ref": "common.json#/$defs/hash" },
+              "bytes": { "type": "integer", "minimum": 0 }
+            }
+          },
+          "stored": {
+            "type": "object", "additionalProperties": false, "required": ["hash", "bytes"],
+            "properties": {
+              "hash":  { "$ref": "common.json#/$defs/hash" },
+              "bytes": { "type": "integer", "minimum": 0 }
+            }
+          }
+        },
+        "allOf": [
+          {
+            "$comment": "非圧縮なら送信元と集約先のハッシュは一致する",
+            "if": { "properties": { "compression": { "const": "none" } }, "required": ["compression"] },
+            "then": { "properties": { "stored_path": { "pattern": "^(?!.*\\.zst$).+$" } } }
+          },
+          {
+            "if": { "properties": { "compression": { "const": "zstd" } }, "required": ["compression"] },
+            "then": { "properties": { "stored_path": { "pattern": "\\.zst$" } } }
+          }
+        ]
+      }
+    }
+  }
+}
