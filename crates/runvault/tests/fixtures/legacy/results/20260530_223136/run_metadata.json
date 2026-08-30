@@ -1,0 +1,10 @@
+{
+  "llm_model": "llama3.2:latest",
+  "llm_endpoint": "http://localhost:11434/api/chat",
+  "llm_temperature": 0.0,
+  "llm_seed": 0,
+  "total_calls": 32,
+  "cache_hits": 32,
+  "cache_hit_rate": 1.0,
+  "determinism_note": "LLM output is outside socsim bit-reproducibility; the prompt->response cache (with temperature=0 and fixed seed) is the reproducibility mechanism. The socsim core (directed network, message delivery, activation order, metrics) is deterministic given the seed."
+}

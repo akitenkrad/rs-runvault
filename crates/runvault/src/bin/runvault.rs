@@ -27,6 +27,8 @@ enum Command {
     Verify(VerifyArgs),
     /// Turn runs whose process was killed into recorded failures.
     Gc(GcArgs),
+    /// Read run directories written before this specification existed.
+    Legacy(LegacyArgs),
 }
 
 #[derive(Args)]
@@ -52,6 +54,22 @@ struct VerifyArgs {
 }
 
 #[derive(Args)]
+struct LegacyArgs {
+    /// Where the experiment directories live.
+    #[arg(long, default_value = "results")]
+    results_root: PathBuf,
+    /// The stable repository id the keys are built from.
+    #[arg(long)]
+    repo_id: String,
+    /// Print the runs as JSON instead of a summary.
+    #[arg(long)]
+    json: bool,
+    /// Also print what each run could not convert.
+    #[arg(long)]
+    notes: bool,
+}
+
+#[derive(Args)]
 struct GcArgs {
     /// Where the experiment directories live.
     #[arg(long, default_value = "results")]
@@ -67,6 +85,7 @@ fn main() -> ExitCode {
         Command::Path(args) => cmd_path(&args),
         Command::Verify(args) => cmd_verify(&args),
         Command::Gc(args) => cmd_gc(&args),
+        Command::Legacy(args) => cmd_legacy(&args),
     };
     match result {
         Ok(code) => code,
@@ -145,6 +164,77 @@ fn cmd_gc(args: &GcArgs) -> Result<ExitCode> {
         println!("{label}\t{}", relative_to_cwd(&entry.dir).display());
     }
     println!("{} 件を確認し，{stale} 件が異常終了でした", reaped.len());
+    Ok(ExitCode::SUCCESS)
+}
+
+fn cmd_legacy(args: &LegacyArgs) -> Result<ExitCode> {
+    let runs = runvault::legacy::read_all(&args.results_root, &args.repo_id)?;
+
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&runs)?);
+        return Ok(ExitCode::SUCCESS);
+    }
+
+    // The index keys on (run_key) and (run_key, name, step, step_unit, scope);
+    // if those are not unique the runs cannot be joined, so it is checked here
+    // rather than discovered when the index is built.
+    let mut keys = std::collections::HashSet::new();
+    let mut metric_keys = std::collections::HashSet::new();
+    let mut collisions = 0;
+    let (mut metrics, mut tables) = (0, 0);
+
+    for run in &runs {
+        if !keys.insert(run.run_key.clone()) {
+            eprintln!("run_key が重複しています: {}", run.run_key);
+            collisions += 1;
+        }
+        for metric in &run.metrics {
+            let key = (
+                run.run_key.clone(),
+                metric.name.clone(),
+                metric.step,
+                metric.step_unit.clone(),
+                metric.scope.clone(),
+            );
+            if !metric_keys.insert(key) {
+                eprintln!(
+                    "指標の主キーが重複しています: {} {}",
+                    run.run_key, metric.name
+                );
+                collisions += 1;
+            }
+        }
+        metrics += run.metrics.len();
+        tables += run.tables.len();
+
+        println!(
+            "{}\t{} metrics\t{} tables\t{}",
+            run.timestamp.as_deref().unwrap_or("-"),
+            run.metrics.len(),
+            run.tables.len(),
+            run.relpath
+        );
+        if args.notes {
+            for note in &run.notes {
+                println!("  note: {note}");
+            }
+            for table in &run.tables {
+                println!(
+                    "  table: {} ({} 行) — {}",
+                    table.file, table.rows, table.reason
+                );
+            }
+        }
+    }
+
+    println!(
+        "\nrun {} 件・指標 {metrics} 行・変換しなかった表 {tables} 件",
+        runs.len()
+    );
+    if collisions > 0 {
+        eprintln!("主キーの重複 {collisions} 件");
+        return Ok(ExitCode::FAILURE);
+    }
     Ok(ExitCode::SUCCESS)
 }
 

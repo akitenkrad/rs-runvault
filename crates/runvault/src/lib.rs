@@ -38,6 +38,7 @@ pub mod gc;
 pub mod git;
 pub mod hash;
 pub mod ids;
+pub mod legacy;
 pub mod lockfile;
 pub mod meta;
 pub mod paths;

@@ -1,0 +1,4 @@
+figure,experiment,rule,n_a,n_b,seed,final_step,avg_same_ratio,avg_same_ratio_a,avg_same_ratio_b,pct_no_opposite,n_dissatisfied,n_moved
+Fig. 11,fig11_tau_one_third,ratio:0.333,0,0,42,3,0.7113,0.6990,0.7236,28.08,0,0
+Fig. 11,fig11_tau_one_third,ratio:0.333,0,0,123,4,0.6876,0.6656,0.7096,22.60,0,0
+Fig. 9,fig09_tau_one_half_lenient,ratio:0.500,0,0,42,4,0.8105,0.8026,0.8185,41.10,0,0

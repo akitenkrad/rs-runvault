@@ -1,0 +1,20 @@
+{
+  "command": "run",
+  "rule": "ratio:0.500",
+  "rule_kind": "ratio",
+  "move_mode": "strict",
+  "move_strategy": "nearest",
+  "threshold": 0.5,
+  "min_same": null,
+  "max_same": null,
+  "rows": 13,
+  "cols": 16,
+  "n_a": 73,
+  "n_b": 73,
+  "n_vacant": 62,
+  "vacant_rate": 0.3,
+  "seed": 42,
+  "max_iterations": 500,
+  "snapshot_interval": 1,
+  "output_dir": "results/20260620_134109"
+}

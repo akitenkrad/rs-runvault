@@ -1,0 +1,15 @@
+{
+  "threshold": {
+    "start": 0.4,
+    "step": 0.05,
+    "stop": 0.6
+  },
+  "vacant_rate": 0.3,
+  "rows": 13,
+  "cols": 16,
+  "seeds": [
+    42
+  ],
+  "max_iterations": 500,
+  "snapshot_interval": 0
+}
