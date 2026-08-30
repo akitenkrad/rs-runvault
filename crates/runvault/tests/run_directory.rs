@@ -1239,3 +1239,132 @@ fn a_sweep_parent_may_not_name_its_own_sweep_twice() {
         "01K3QZ8F7H9M2N4P6R8T0V2X4Z"
     );
 }
+
+#[test]
+fn a_terminal_line_may_not_contradict_its_own_budget() {
+    let results = tempfile::tempdir().unwrap();
+    let mut run = Run::start(
+        RunOptions::new("axelrod", "simulate")
+            .repo_id("axelrod1997")
+            .domain("simulation")
+            .origin(Origin::Manual)
+            .results_root(results.path())
+            .parameters(&json!({"features": 5, "traits": 10}))
+            .unwrap()
+            .master_seed(42),
+    )
+    .unwrap();
+    let dir = run.dir().to_path_buf();
+
+    let terminal = |unit: &str, t: f64, censored: bool| {
+        json!({"unit_id": unit, "t": t, "t_unit": "event",
+               "outcome": if censored { "unconverged" } else { "converged" },
+               "censored": censored, "budget": 100.0})
+    };
+
+    // Censored means the budget ran out, so the line has to say it ran out.
+    let err = run
+        .log_event("terminal", &terminal("trial-0", 58.0, true))
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("censored=true"), "{err}");
+
+    // Nothing observes past its own budget.
+    let err = run
+        .log_event("terminal", &terminal("trial-1", 101.0, false))
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("budget"), "{err}");
+
+    run.log_event("terminal", &terminal("trial-2", 58.0, false))
+        .unwrap();
+    run.log_event("terminal", &terminal("trial-3", 100.0, true))
+        .unwrap();
+    run.log_metrics("run", &[("n_units", 2.0)]).unwrap();
+    run.finish().unwrap();
+
+    let lines: Vec<Value> = std::fs::read_to_string(dir.join("events.jsonl"))
+        .unwrap()
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    assert_eq!(lines.len(), 2, "the refused lines were not written");
+    for line in &lines {
+        assert_valid("event", line);
+    }
+}
+
+#[test]
+fn a_sweep_child_is_not_a_run_started_by_hand() {
+    // Both are `simulate`, so narrowing by subcommand alone hands back the last
+    // child of the sweep rather than the run someone started themselves.
+    let results = tempfile::tempdir().unwrap();
+    let options = |sub: &str| {
+        RunOptions::new("axelrod", sub)
+            .repo_id("axelrod1997")
+            .domain("simulation")
+            .origin(Origin::Manual)
+            .results_root(results.path())
+            .parameters(&json!({"features": 5}))
+            .unwrap()
+            .master_seed(42)
+    };
+
+    let alone = Run::start(options("simulate")).unwrap();
+    let alone_dir = alone.dir().to_path_buf();
+    alone.finish().unwrap();
+
+    let parent = Run::start(options("sweep").sweep_parent()).unwrap();
+    let (sweep_id, parent_uid) = (
+        parent.sweep_id().unwrap().to_string(),
+        parent.run_uid().to_string(),
+    );
+    let mut children = Vec::new();
+    for index in 0..2u64 {
+        let child = Run::start(options("simulate").lineage(runvault::Lineage {
+            sweep_id: Some(sweep_id.clone()),
+            parent_run_uid: Some(parent_uid.clone()),
+            ..Default::default()
+        }))
+        .unwrap();
+        children.push(child.dir().to_path_buf());
+        let _ = index;
+        child.finish().unwrap();
+    }
+    parent.finish().unwrap();
+
+    let runvault = |args: &[&str]| -> (bool, Vec<String>) {
+        let out = Command::new(env!("CARGO_BIN_EXE_runvault"))
+            .args(args)
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+        (
+            out.status.success(),
+            stdout.lines().map(str::to_string).collect(),
+        )
+    };
+    let root = results.path().to_string_lossy().to_string();
+    let base = ["path", "--results-root", &root, "--experiment", "axelrod"];
+
+    let (ok, lines) = runvault(&[&base[..], &["--latest", "--subcommand", "simulate"]].concat());
+    assert!(ok);
+    assert!(lines[0].contains(children[1].file_name().unwrap().to_str().unwrap()));
+
+    let (ok, lines) = runvault(
+        &[
+            &base[..],
+            &["--latest", "--subcommand", "simulate", "--standalone"],
+        ]
+        .concat(),
+    );
+    assert!(ok, "{lines:?}");
+    assert_eq!(
+        PathBuf::from(&lines[0]),
+        std::fs::canonicalize(&alone_dir).unwrap()
+    );
+
+    let (ok, lines) = runvault(&[&base[..], &["--children-of", &parent_uid]].concat());
+    assert!(ok);
+    assert_eq!(lines.len(), 2, "{lines:?}");
+}

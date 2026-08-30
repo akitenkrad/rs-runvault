@@ -1,6 +1,6 @@
 # runvault コア語彙. 追加・廃止はこのファイルを更新し vocab_version を上げる.
 # 実験固有の語は namespace 付き ( "x.<repo_id>.<name>" ) とし, コア語彙とは衝突させない.
-vocab_version = "1.1"
+vocab_version = "1.2"
 
 [domains]
 # analysis = 決定的な解析計算 (RNG を使わない). simulation を名乗ると master_seed が必須になり,
@@ -16,7 +16,9 @@ values = ["run", "sweep", "trial", "agent", "flow", "epoch_group"]
 
 [step_units]
 # metrics.csv の step_unit 列 / events.jsonl の t_unit: 時間軸の単位
-values = ["step", "epoch", "turn", "packet", "generation", "round"]
+# event = 離散事象そのものを刻みとする (Axelrod のような事象駆動 ABM や Gillespie 法に
+#         「ステップ」に相当する自然な区切りが無いため).
+values = ["step", "event", "epoch", "turn", "packet", "generation", "round"]
 
 [event_schemas]
 values = ["observation", "terminal", "note"]

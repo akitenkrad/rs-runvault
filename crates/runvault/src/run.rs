@@ -1095,14 +1095,43 @@ fn check_event_reserved(kind: &str, object: &Map<String, Value>) -> Result<()> {
         .copied()
         .filter(|key| object.get(*key).is_none_or(Value::is_null))
         .collect();
-    if missing.is_empty() {
-        Ok(())
-    } else {
-        Err(Error::spec(format!(
+    if !missing.is_empty() {
+        return Err(Error::spec(format!(
             "`{kind}` を名乗るイベントには {} が必要です",
             missing.join(" / ")
-        )))
+        )));
     }
+    if kind == "terminal" {
+        check_terminal_consistency(object)?;
+    }
+    Ok(())
+}
+
+/// What a `terminal` line claims about itself has to hold.
+///
+/// Catching it here rather than in a later deep check means the contradiction
+/// never reaches the file: a censored observation says the budget ran out, so
+/// its `t` is the budget, and no observation can run past one.
+fn check_terminal_consistency(object: &Map<String, Value>) -> Result<()> {
+    let number = |key: &str| object.get(key).and_then(Value::as_f64);
+    let (Some(t), Some(budget)) = (number("t"), number("budget")) else {
+        return Ok(());
+    };
+    if t > budget {
+        return Err(Error::spec(format!(
+            "terminal の t={t} が budget={budget} を超えています"
+        )));
+    }
+    let censored = object
+        .get("censored")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    if censored && t != budget {
+        return Err(Error::spec(format!(
+            "censored=true なのに t={t} が budget={budget} と違います (予算に達したから打ち切られた，という主張と行が食い違います)"
+        )));
+    }
+    Ok(())
 }
 
 #[cfg(test)]

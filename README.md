@@ -69,6 +69,8 @@ failure — the presence of the lock alone never means "still running".
 | `runvault path --experiment E --config-hash 9f2c41ab` | every run of one condition |
 | `runvault path --experiment E --execution-hash 3b1d --finished` | has this exact thing already run? |
 | `runvault path --experiment E --latest --subcommand run` | the latest run of one subcommand |
+| `runvault path --experiment E --latest --subcommand run --standalone` | …ignoring the ones a sweep started |
+| `runvault path --experiment E --children-of <run_uid>` | the runs of one sweep |
 | `runvault verify <run>` | the invariants that span a run's files |
 | `runvault gc` | record the runs whose process was killed |
 

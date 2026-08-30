@@ -60,6 +60,15 @@ struct PathArgs {
     /// alone can hand back the parent, which holds no metrics of its own.
     #[arg(long)]
     subcommand: Option<String>,
+    /// Only consider runs that belong to no sweep.
+    ///
+    /// A sweep's children have the same subcommand as a run started by hand, so
+    /// narrowing by subcommand alone still hands back the last child.
+    #[arg(long, conflicts_with = "children_of")]
+    standalone: bool,
+    /// Only consider the children of this sweep parent, by its `run_uid`.
+    #[arg(long, value_name = "RUN_UID")]
+    children_of: Option<String>,
 }
 
 #[derive(Args)]
@@ -119,7 +128,7 @@ fn cmd_path(args: &PathArgs) -> Result<ExitCode> {
     // `latest_finished` is one link per experiment, so narrowing by subcommand
     // means picking the newest finished run instead of following it.
     if args.latest {
-        if args.subcommand.is_none() {
+        if args.subcommand.is_none() && !args.standalone && args.children_of.is_none() {
             let link = experiment_dir.join(paths::LATEST_FINISHED);
             if !link.exists() {
                 eprintln!("runvault: {} がありません", link.display());
@@ -178,6 +187,18 @@ fn select_runs(experiment_dir: &Path, args: &PathArgs) -> Result<Vec<PathBuf>> {
             .subcommand
             .as_ref()
             .is_some_and(|want| meta.subcommand != *want)
+        {
+            continue;
+        }
+        let parent = meta
+            .lineage
+            .as_ref()
+            .and_then(|l| l.parent_run_uid.as_deref());
+        if args.standalone && parent.is_some() {
+            continue;
+        }
+        if let Some(wanted) = &args.children_of
+            && parent != Some(wanted.as_str())
         {
             continue;
         }
