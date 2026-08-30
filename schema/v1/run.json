@@ -783,18 +783,51 @@
         ],
         "properties": {
           "rng": {
-            "type": "object",
-            "required": [
-              "master_seed"
-            ],
-            "properties": {
-              "master_seed": {
-                "type": "integer",
-                "minimum": 0
+            "type": "object"
+          }
+        },
+        "allOf": [
+          {
+            "$comment": "sweep 親はシード列で駆動されるので単一の master_seed を持たない. 列は /parameters と seed_pointers 経由で execution_hash に入る. 免除されるのは親だけで, 子 (parent_run_uid を持つ) には従来どおり必須.",
+            "if": {
+              "required": [
+                "lineage"
+              ],
+              "properties": {
+                "lineage": {
+                  "type": "object",
+                  "required": [
+                    "sweep_id"
+                  ],
+                  "properties": {
+                    "sweep_id": {
+                      "type": "string"
+                    },
+                    "parent_run_uid": {
+                      "type": "null"
+                    }
+                  }
+                }
+              }
+            },
+            "then": true,
+            "else": {
+              "properties": {
+                "rng": {
+                  "required": [
+                    "master_seed"
+                  ],
+                  "properties": {
+                    "master_seed": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  }
+                }
               }
             }
           }
-        }
+        ]
       }
     },
     {

@@ -46,6 +46,12 @@ run.log_event("observation", &record)?;
 run.finish()?;
 ```
 
+Write generated files under `run.dir()/artifacts/` (and logs under `logs/`):
+`finish()` walks exactly those two trees into `manifest.csv`, so anything written
+elsewhere in the run directory is not part of the record. A sweep parent is
+driven by a list of seeds rather than one, so it declares `lineage.sweep_id` and
+leaves `master_seed` unset; its children each carry their own.
+
 A run dropped without `finish()` records itself as failed. A run whose process is
 killed leaves a lock behind, and `runvault gc` turns that into a recorded
 failure — the presence of the lock alone never means "still running".
@@ -57,6 +63,7 @@ failure — the presence of the lock alone never means "still running".
 | `runvault path --experiment E --latest` | the last completed run |
 | `runvault path --experiment E --config-hash 9f2c41ab` | every run of one condition |
 | `runvault path --experiment E --execution-hash 3b1d --finished` | has this exact thing already run? |
+| `runvault path --experiment E --latest --subcommand run` | the latest run of one subcommand |
 | `runvault verify <run>` | the invariants that span a run's files |
 | `runvault gc` | record the runs whose process was killed |
 

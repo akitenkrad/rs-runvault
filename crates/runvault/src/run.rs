@@ -279,9 +279,17 @@ impl RunOptions {
         ids::validate_slug("subcommand", &self.subcommand)?;
         ids::validate_slug("domain", domain)?;
 
-        if domain == "simulation" && self.master_seed.is_none() {
+        // A sweep parent is driven by a list of seeds, not by one; the list lives
+        // in `/parameters` and reaches `execution_hash` through `seed_pointers`.
+        // Its children still need theirs.
+        let is_sweep_parent = self
+            .lineage
+            .as_ref()
+            .is_some_and(|l| l.sweep_id.is_some() && l.parent_run_uid.is_none());
+        if domain == "simulation" && self.master_seed.is_none() && !is_sweep_parent {
             return Err(Error::spec(
-                "domain=simulation では master_seed が必要です (RunOptions::master_seed)",
+                "domain=simulation では master_seed が必要です (RunOptions::master_seed)．\
+                 seed 列で駆動する sweep 親は lineage.sweep_id を立てれば免除されます",
             ));
         }
         if domain == "llm-safety" && self.llm.is_none() {
@@ -510,6 +518,37 @@ impl Run {
         }
     }
 
+    /// Appends several metrics that share a step and a scope, flushing once.
+    ///
+    /// One call per number means one flush per number, which shows on a run that
+    /// records a handful of metrics on every step of a long simulation.
+    pub fn log_metrics(
+        &mut self,
+        step: Option<(u64, &str)>,
+        scope: &str,
+        values: &[(&str, f64)],
+    ) -> Result<()> {
+        let (step_number, step_unit) = match step {
+            Some((n, unit)) => (Some(n), Some(unit.to_string())),
+            None => (None, None),
+        };
+        for (name, value) in values {
+            check_metric(name, scope, step_unit.as_deref(), *value)?;
+        }
+        for (i, (name, value)) in values.iter().enumerate() {
+            let row = [
+                self.meta.run_uid.clone(),
+                step_number.map(|s| s.to_string()).unwrap_or_default(),
+                step_unit.clone().unwrap_or_default(),
+                scope.to_string(),
+                (*name).to_string(),
+                crate::canonical::format_f64(*value)?,
+            ];
+            self.append_metric_row(row, i + 1 == values.len())?;
+        }
+        Ok(())
+    }
+
     /// Appends one line to `events.jsonl`.
     ///
     /// A record that calls itself `observation` or `terminal` must carry the
@@ -681,7 +720,7 @@ impl Run {
         files::write_json_atomically(&self.dir.join("status.json"), &status)
     }
 
-    fn append_metric_row(&mut self, row: [String; 6]) -> Result<()> {
+    fn append_metric_row(&mut self, row: [String; 6], flush: bool) -> Result<()> {
         let writer = match &mut self.metrics {
             Some(w) => w,
             None => {
@@ -692,7 +731,9 @@ impl Run {
             }
         };
         writer.write_record(&row).map_err(Error::Csv)?;
-        writer.flush().map_err(Error::PlainIo)?;
+        if flush {
+            writer.flush().map_err(Error::PlainIo)?;
+        }
         self.counts.metrics += 1;
         Ok(())
     }
@@ -775,7 +816,7 @@ impl MetricEntry<'_> {
             self.name.clone(),
             crate::canonical::format_f64(self.value)?,
         ];
-        self.run.append_metric_row(row)
+        self.run.append_metric_row(row, true)
     }
 }
 

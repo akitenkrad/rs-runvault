@@ -1038,3 +1038,148 @@ fn the_cli_answers_whether_this_exact_thing_already_ran() {
         &config_hash,
     ]));
 }
+
+#[test]
+fn a_sweep_parent_is_driven_by_a_list_of_seeds_not_by_one() {
+    // Its children each have a seed; the parent has the list, which reaches
+    // execution_hash through seed_pointers. Demanding one seed of the parent
+    // would mean writing a representative value that is not true.
+    let results = tempfile::tempdir().unwrap();
+    let parent = Run::start(
+        RunOptions::new("schelling", "sweep")
+            .repo_id("schelling1971")
+            .domain("simulation")
+            .origin(Origin::Manual)
+            .results_root(results.path())
+            .parameters(&json!({"threshold": {"start": 0.4, "stop": 0.6}, "seeds": [42, 43]}))
+            .unwrap()
+            .seed_pointers(["/seeds"])
+            .lineage(runvault::Lineage {
+                sweep_id: Some("sweep-a".into()),
+                ..Default::default()
+            }),
+    )
+    .unwrap();
+    let (parent_dir, sweep_id, parent_uid) = (
+        parent.dir().to_path_buf(),
+        "sweep-a".to_string(),
+        parent.run_uid().to_string(),
+    );
+
+    let meta = read_json(&parent_dir.join("run.json"));
+    assert_valid("run", &meta);
+    assert!(meta["rng"]["master_seed"].is_null());
+
+    let mut child_dirs = Vec::new();
+    for (index, seed) in [42u64, 43].into_iter().enumerate() {
+        let child = Run::start(
+            RunOptions::new("schelling", "run")
+                .repo_id("schelling1971")
+                .domain("simulation")
+                .origin(Origin::Manual)
+                .results_root(results.path())
+                .parameters(&json!({"threshold": 0.5, "seed": seed}))
+                .unwrap()
+                .seed_pointers(["/seed"])
+                .master_seed(seed)
+                .replicate_index(index as u64)
+                .lineage(runvault::Lineage {
+                    sweep_id: Some(sweep_id.clone()),
+                    parent_run_uid: Some(parent_uid.clone()),
+                    ..Default::default()
+                }),
+        )
+        .unwrap();
+        child_dirs.push(child.dir().to_path_buf());
+        child.finish().unwrap();
+    }
+    parent.finish().unwrap();
+
+    for dir in &child_dirs {
+        let meta = read_json(&dir.join("run.json"));
+        assert_valid("run", &meta);
+        assert_eq!(meta["lineage"]["parent_run_uid"], json!(parent_uid));
+        assert!(
+            !meta["rng"]["master_seed"].is_null(),
+            "a child still needs its seed"
+        );
+    }
+    // Same condition, different seed: the replicates share config_hash.
+    let hash_of = |dir: &Path| read_json(&dir.join("run.json"))["config_hash"].clone();
+    assert_eq!(hash_of(&child_dirs[0]), hash_of(&child_dirs[1]));
+
+    // The parent finished last, so `--latest` alone hands back the run that
+    // holds no metrics. Narrowing by subcommand is what a plotter needs.
+    let runvault = |args: &[&str]| -> (bool, String) {
+        let out = Command::new(env!("CARGO_BIN_EXE_runvault"))
+            .args(args)
+            .output()
+            .unwrap();
+        (
+            out.status.success(),
+            String::from_utf8_lossy(&out.stdout).trim().to_string(),
+        )
+    };
+    let root = results.path().to_string_lossy().to_string();
+    let (ok, latest) = runvault(&[
+        "path",
+        "--results-root",
+        &root,
+        "--experiment",
+        "schelling",
+        "--latest",
+    ]);
+    assert!(ok);
+    assert!(latest.contains("/sweep_"), "{latest}");
+
+    let (ok, latest_run) = runvault(&[
+        "path",
+        "--results-root",
+        &root,
+        "--experiment",
+        "schelling",
+        "--latest",
+        "--subcommand",
+        "run",
+    ]);
+    assert!(ok, "{latest_run}");
+    assert!(latest_run.contains("/run_"), "{latest_run}");
+    assert_eq!(latest_run, child_dirs[1].to_string_lossy());
+}
+
+#[test]
+fn metrics_written_as_a_batch_land_as_the_same_rows() {
+    let results = tempfile::tempdir().unwrap();
+    let mut run = Run::start(
+        RunOptions::new("e", "main")
+            .repo_id("r")
+            .domain("other")
+            .origin(Origin::Manual)
+            .results_root(results.path())
+            .parameters(&json!({}))
+            .unwrap(),
+    )
+    .unwrap();
+    let dir = run.dir().to_path_buf();
+
+    run.log_metrics(Some((3, "step")), "run", &[("a", 0.5), ("b", 1.5)])
+        .unwrap();
+    run.log_metrics(None, "run", &[("asr", 0.25)]).unwrap();
+    // The batch is checked as a whole before anything is written.
+    assert!(
+        run.log_metrics(None, "trial", &[("cost_usd", 1.0)])
+            .is_err()
+    );
+    run.finish().unwrap();
+
+    let rows = csv_rows(&dir.join("metrics.csv"), &["value"], &["step"]);
+    assert_eq!(rows.len(), 3);
+    for row in &rows {
+        assert_valid("metrics.row", row);
+    }
+    assert_eq!(rows[0]["name"], "a");
+    assert_eq!(rows[0]["step"], 3);
+    assert_eq!(rows[0]["step_unit"], "step");
+    assert_eq!(rows[2]["name"], "asr");
+    assert!(rows[2]["step"].is_null());
+}

@@ -54,6 +54,12 @@ struct PathArgs {
     /// Only consider runs that finished. A failed run is not a run that happened.
     #[arg(long)]
     finished: bool,
+    /// Only consider runs of this subcommand.
+    ///
+    /// A sweep's parent and its children share an experiment, so `--latest`
+    /// alone can hand back the parent, which holds no metrics of its own.
+    #[arg(long)]
+    subcommand: Option<String>,
 }
 
 #[derive(Args)]
@@ -108,49 +114,86 @@ fn main() -> ExitCode {
 fn cmd_path(args: &PathArgs) -> Result<ExitCode> {
     let experiment_dir = paths::experiment_dir(&args.results_root, &args.experiment);
 
-    if args.config_hash.is_some() || args.execution_hash.is_some() {
-        let mut found = 0;
-        for dir in paths::run_dirs(&experiment_dir)? {
-            let Ok(meta) = files::read_json::<RunMeta>(&dir.join("run.json")) else {
-                continue;
-            };
-            let matches = |prefix: &Option<String>, hash: &str| {
-                prefix.as_ref().is_none_or(|p| hash.starts_with(p))
-            };
-            if !matches(&args.config_hash, &meta.config_hash)
-                || !matches(&args.execution_hash, &meta.execution_hash)
-            {
-                continue;
+    let selected = select_runs(&experiment_dir, args)?;
+
+    // `latest_finished` is one link per experiment, so narrowing by subcommand
+    // means picking the newest finished run instead of following it.
+    if args.latest {
+        if args.subcommand.is_none() {
+            let link = experiment_dir.join(paths::LATEST_FINISHED);
+            if !link.exists() {
+                eprintln!("runvault: {} がありません", link.display());
+                return Ok(ExitCode::FAILURE);
             }
-            if args.finished && !is_finished(&dir) {
-                continue;
-            }
-            println!("{}", dir.display());
-            found += 1;
+            println!("{}", std::fs::canonicalize(&link)?.display());
+            return Ok(ExitCode::SUCCESS);
         }
-        // Nothing found is a failing exit code so a shell script can branch on it
-        // without parsing the output.
-        return Ok(if found > 0 {
-            ExitCode::SUCCESS
-        } else {
-            ExitCode::FAILURE
+        let newest = selected
+            .into_iter()
+            .filter_map(|dir| finished_at(&dir).map(|at| (at, dir)))
+            .max_by(|a, b| a.0.cmp(&b.0));
+        return Ok(match newest {
+            Some((_, dir)) => {
+                println!("{}", dir.display());
+                ExitCode::SUCCESS
+            }
+            None => {
+                eprintln!("runvault: 条件に合う完了済みの run がありません");
+                ExitCode::FAILURE
+            }
         });
     }
 
-    if args.latest {
-        let link = experiment_dir.join(paths::LATEST_FINISHED);
-        if !link.exists() {
-            eprintln!("runvault: {} がありません", link.display());
-            return Ok(ExitCode::FAILURE);
-        }
-        println!("{}", std::fs::canonicalize(&link)?.display());
-        return Ok(ExitCode::SUCCESS);
-    }
-
-    for dir in paths::run_dirs(&experiment_dir)? {
+    let filtering = args.config_hash.is_some() || args.execution_hash.is_some();
+    for dir in &selected {
         println!("{}", dir.display());
     }
-    Ok(ExitCode::SUCCESS)
+    // Nothing found is a failing exit code so a shell script can branch on it
+    // without parsing the output. Listing everything is not a search, so an empty
+    // experiment is not a failure there.
+    Ok(if selected.is_empty() && filtering {
+        ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
+    })
+}
+
+/// The runs of an experiment that pass every filter the caller gave.
+fn select_runs(experiment_dir: &Path, args: &PathArgs) -> Result<Vec<PathBuf>> {
+    let mut out = Vec::new();
+    for dir in paths::run_dirs(experiment_dir)? {
+        let Ok(meta) = files::read_json::<RunMeta>(&dir.join("run.json")) else {
+            continue;
+        };
+        let matches = |prefix: &Option<String>, hash: &str| {
+            prefix.as_ref().is_none_or(|p| hash.starts_with(p))
+        };
+        if !matches(&args.config_hash, &meta.config_hash)
+            || !matches(&args.execution_hash, &meta.execution_hash)
+        {
+            continue;
+        }
+        if args
+            .subcommand
+            .as_ref()
+            .is_some_and(|want| meta.subcommand != *want)
+        {
+            continue;
+        }
+        if (args.finished || args.latest) && !is_finished(&dir) {
+            continue;
+        }
+        out.push(dir);
+    }
+    Ok(out)
+}
+
+/// When a run finished, for a run that did.
+fn finished_at(dir: &Path) -> Option<String> {
+    files::read_json::<runvault::RunStatus>(&dir.join("status.json"))
+        .ok()
+        .filter(|status| status.state == runvault::State::Finished)
+        .map(|status| status.finished_at)
 }
 
 /// Whether a run directory holds a `status.json` that says it finished.

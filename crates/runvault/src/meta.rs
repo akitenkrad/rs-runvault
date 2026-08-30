@@ -228,6 +228,7 @@ schema_type! {
 
 schema_type! {
     /// How this run relates to other runs. Four relations, four fields.
+    #[derive(Default)]
     pub struct Lineage {
         /// The sweep this run belongs to.
         pub sweep_id: Option<String>,
