@@ -234,3 +234,34 @@ fn the_enumerations_offer_exactly_the_values_the_schema_allows() {
         node(&load("status.json"), "/properties/state"),
     );
 }
+
+#[test]
+fn sync_json_matches_the_types_that_write_it() {
+    let sync = load("sync.json");
+    assert_parity::<runvault::sync::SyncReceipt>("sync.json", &sync);
+    assert_parity::<runvault::sync::SyncSource>(
+        "sync.json /source",
+        node(&sync, "/properties/source"),
+    );
+    assert_parity::<runvault::sync::SyncedFile>(
+        "sync.json /files[]",
+        node(&sync, "/properties/files/items"),
+    );
+    assert_parity::<runvault::sync::FileDigest>(
+        "sync.json /files[]/source",
+        node(&sync, "/properties/files/items/properties/source"),
+    );
+    assert_parity::<runvault::sync::FileDigest>(
+        "sync.json /files[]/stored",
+        node(&sync, "/properties/files/items/properties/stored"),
+    );
+    assert_enum_parity::<runvault::sync::Compression>(
+        "sync.json /files[]/compression",
+        node(&sync, "/properties/files/items/properties/compression"),
+    );
+}
+
+#[test]
+fn the_vault_declaration_matches_the_type_that_reads_it() {
+    assert_parity::<runvault::sync::VaultConfig>("vault.config.json", &load("vault.config.json"));
+}

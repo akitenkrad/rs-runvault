@@ -15,6 +15,7 @@ blake3 = "1.8"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
 csv = "1.4"
+globset = "0.4"
 schemars = "1.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -24,6 +25,7 @@ thiserror = "2"
 toml = "0.9"
 ulid = "3"
 unicode-normalization = "0.1"
+zstd = "0.13"
 
 jsonschema = "0.52"
 tempfile = "3"

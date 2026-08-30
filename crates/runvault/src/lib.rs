@@ -45,6 +45,7 @@ pub mod paths;
 pub mod pointer;
 pub mod run;
 pub mod status;
+pub mod sync;
 pub mod verify;
 pub mod vocabulary;
 
