@@ -56,6 +56,7 @@ failure — the presence of the lock alone never means "still running".
 | --- | --- |
 | `runvault path --experiment E --latest` | the last completed run |
 | `runvault path --experiment E --config-hash 9f2c41ab` | every run of one condition |
+| `runvault path --experiment E --execution-hash 3b1d --finished` | has this exact thing already run? |
 | `runvault verify <run>` | the invariants that span a run's files |
 | `runvault gc` | record the runs whose process was killed |
 

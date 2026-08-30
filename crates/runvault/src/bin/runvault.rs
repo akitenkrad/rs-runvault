@@ -40,11 +40,20 @@ struct PathArgs {
     #[arg(long, default_value = "results")]
     results_root: PathBuf,
     /// Resolve the `latest_finished` link.
-    #[arg(long)]
+    #[arg(long, conflicts_with_all = ["config_hash", "execution_hash"])]
     latest: bool,
-    /// Print every run whose `config_hash` starts with this prefix.
+    /// Print every run whose `config_hash` starts with this prefix (the same condition).
     #[arg(long)]
     config_hash: Option<String>,
+    /// Print every run whose `execution_hash` starts with this prefix.
+    ///
+    /// This is what answers "has this exact thing already been run": the same
+    /// condition, the same seeds, the same commit and the same environment.
+    #[arg(long)]
+    execution_hash: Option<String>,
+    /// Only consider runs that finished. A failed run is not a run that happened.
+    #[arg(long)]
+    finished: bool,
 }
 
 #[derive(Args)]
@@ -99,17 +108,28 @@ fn main() -> ExitCode {
 fn cmd_path(args: &PathArgs) -> Result<ExitCode> {
     let experiment_dir = paths::experiment_dir(&args.results_root, &args.experiment);
 
-    if let Some(prefix) = &args.config_hash {
+    if args.config_hash.is_some() || args.execution_hash.is_some() {
         let mut found = 0;
         for dir in paths::run_dirs(&experiment_dir)? {
             let Ok(meta) = files::read_json::<RunMeta>(&dir.join("run.json")) else {
                 continue;
             };
-            if meta.config_hash.starts_with(prefix) {
-                println!("{}", dir.display());
-                found += 1;
+            let matches = |prefix: &Option<String>, hash: &str| {
+                prefix.as_ref().is_none_or(|p| hash.starts_with(p))
+            };
+            if !matches(&args.config_hash, &meta.config_hash)
+                || !matches(&args.execution_hash, &meta.execution_hash)
+            {
+                continue;
             }
+            if args.finished && !is_finished(&dir) {
+                continue;
+            }
+            println!("{}", dir.display());
+            found += 1;
         }
+        // Nothing found is a failing exit code so a shell script can branch on it
+        // without parsing the output.
         return Ok(if found > 0 {
             ExitCode::SUCCESS
         } else {
@@ -131,6 +151,12 @@ fn cmd_path(args: &PathArgs) -> Result<ExitCode> {
         println!("{}", dir.display());
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// Whether a run directory holds a `status.json` that says it finished.
+fn is_finished(dir: &Path) -> bool {
+    files::read_json::<runvault::RunStatus>(&dir.join("status.json"))
+        .is_ok_and(|status| status.state == runvault::State::Finished)
 }
 
 fn cmd_verify(args: &VerifyArgs) -> Result<ExitCode> {

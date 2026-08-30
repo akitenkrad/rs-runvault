@@ -955,3 +955,86 @@ fn gc_never_leaves_a_live_run_holding_both_a_status_and_a_lock() {
     run.finish().unwrap();
     runvault::verify::shallow(&dir).unwrap();
 }
+
+#[test]
+fn the_cli_answers_whether_this_exact_thing_already_ran() {
+    // A sweep asks this before starting each condition; a failed attempt must
+    // not count as one that happened.
+    let results = tempfile::tempdir().unwrap();
+    let options = |seed: u64| {
+        RunOptions::new("schelling", "main")
+            .repo_id("r")
+            .domain("simulation")
+            .origin(Origin::Manual)
+            .results_root(results.path())
+            .parameters(&json!({"rows": 13, "seed": seed}))
+            .unwrap()
+            .seed_pointers(["/seed"])
+            .master_seed(seed)
+    };
+
+    let done = Run::start(options(1)).unwrap();
+    let done_meta = read_json(&done.dir().join("run.json"));
+    let (config_hash, execution_hash) = (
+        done_meta["config_hash"].as_str().unwrap().to_string(),
+        done_meta["execution_hash"].as_str().unwrap().to_string(),
+    );
+    done.finish().unwrap();
+
+    let attempted = Run::start(options(2)).unwrap();
+    let attempted_execution = read_json(&attempted.dir().join("run.json"))["execution_hash"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    attempted.fail("api", "died").unwrap();
+
+    let runvault = |args: &[&str]| -> bool {
+        Command::new(env!("CARGO_BIN_EXE_runvault"))
+            .args(args)
+            .output()
+            .unwrap()
+            .status
+            .success()
+    };
+    let root = results.path().to_string_lossy().to_string();
+    let ask = |hash: &str, finished: bool| {
+        let mut args = vec![
+            "path",
+            "--results-root",
+            &root,
+            "--experiment",
+            "schelling",
+            "--execution-hash",
+            hash,
+        ];
+        if finished {
+            args.push("--finished");
+        }
+        runvault(&args)
+    };
+
+    assert!(
+        ask(&execution_hash, true),
+        "the finished run should be found"
+    );
+    assert!(
+        !ask(&attempted_execution, true),
+        "a failed attempt is not a run that happened"
+    );
+    assert!(
+        ask(&attempted_execution, false),
+        "without --finished it is still a run"
+    );
+
+    // The two runs are replicates: same condition, different execution.
+    assert_ne!(execution_hash, attempted_execution);
+    assert!(runvault(&[
+        "path",
+        "--results-root",
+        &root,
+        "--experiment",
+        "schelling",
+        "--config-hash",
+        &config_hash,
+    ]));
+}
