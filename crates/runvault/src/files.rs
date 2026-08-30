@@ -6,6 +6,7 @@ use serde::Serialize;
 
 use crate::canonical::blake3_hex;
 use crate::error::{Error, Result};
+use crate::meta::Algorithm;
 
 /// Writes bytes by creating a temporary file next to `path` and renaming it.
 ///
@@ -40,10 +41,36 @@ pub fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T> {
         .map_err(|e| Error::spec(format!("{}: JSON として読めません: {e}", path.display())))
 }
 
-/// BLAKE3 and byte count of a file.
+/// BLAKE3 and byte count of a file. What `runvault` records for its own files.
 pub fn digest_file(path: &Path) -> Result<(String, u64)> {
+    digest_file_as(path, Algorithm::Blake3)
+}
+
+/// The digest of a file under the function a record says it used, and its size.
+///
+/// `runvault` writes BLAKE3, but `schema/v1` also accepts SHA-256 so a record
+/// can carry a digest that came from somewhere else. Both are computed here:
+/// checking only the one this crate prefers would leave the other rows
+/// unexamined while `verify` still reported the run as verified.
+pub fn digest_file_as(path: &Path, algorithm: Algorithm) -> Result<(String, u64)> {
     let bytes = std::fs::read(path).map_err(|e| Error::io(path, e))?;
-    Ok((blake3_hex(&bytes), bytes.len() as u64))
+    let digest = match algorithm {
+        Algorithm::Blake3 => blake3_hex(&bytes),
+        Algorithm::Sha256 => {
+            use sha2::Digest;
+            let mut hasher = sha2::Sha256::new();
+            hasher.update(&bytes);
+            hasher
+                .finalize()
+                .iter()
+                .fold(String::with_capacity(64), |mut out, byte| {
+                    use std::fmt::Write;
+                    let _ = write!(out, "{byte:02x}");
+                    out
+                })
+        }
+    };
+    Ok((digest, bytes.len() as u64))
 }
 
 /// Every regular file under `root`, as paths relative to `base`, sorted.

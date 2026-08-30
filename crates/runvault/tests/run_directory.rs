@@ -721,7 +721,12 @@ fn the_cli_finds_verifies_and_sweeps_runs() {
         &config_hash[..8],
     ]);
     assert!(ok, "{stdout}");
-    assert_eq!(stdout.trim(), dir.to_string_lossy());
+    // The command prints the path as the filesystem sees it, so the expected
+    // side has to be resolved too: on macOS `TMPDIR` is a symlink.
+    assert_eq!(
+        stdout.trim(),
+        std::fs::canonicalize(&dir).unwrap().to_string_lossy()
+    );
 
     // A prefix that matches nothing is a failure, so a shell script can branch on it.
     let (ok, _) = runvault(&[

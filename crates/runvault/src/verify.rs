@@ -7,13 +7,15 @@
 //! belong before a sync or before a table is built.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
-use std::path::Path;
+use std::io::BufRead;
+use std::path::{Path, PathBuf};
 
 use crate::config::{ConfigEnvelope, Exclusions};
 use crate::error::{Error, Result};
 use crate::files;
+use crate::hash;
 use crate::ids;
-use crate::meta::{Lineage, Research, RunMeta};
+use crate::meta::{Algorithm, Lineage, Research, RunMeta};
 use crate::status::{RunStatus, State};
 
 /// Runs every shallow invariant against a run directory.
@@ -230,33 +232,18 @@ fn check_manifest(run_dir: &Path, uid: &str) -> Result<()> {
 }
 
 fn check_events(run_dir: &Path, uid: &str) -> Result<()> {
-    let path = run_dir.join("events.jsonl");
-    if !path.is_file() {
-        return Ok(());
-    }
-    let text = std::fs::read_to_string(&path).map_err(|e| Error::io(&path, e))?;
-    for (i, line) in text.lines().enumerate() {
-        if line.trim().is_empty() {
-            continue;
-        }
-        let value: serde_json::Value = serde_json::from_str(line).map_err(|e| {
-            Error::verify(format!(
-                "events.jsonl の {} 行目が JSON ではありません: {e}",
-                i + 1
-            ))
-        })?;
+    for_each_event(&run_dir.join("events.jsonl"), |line, value| {
         let found = value
             .get("run_uid")
             .and_then(|v| v.as_str())
             .unwrap_or_default();
         if found != uid {
             return Err(Error::verify(format!(
-                "events.jsonl の {} 行目の run_uid `{found}` が run.json `{uid}` と違います",
-                i + 1
+                "events.jsonl の {line} 行目の run_uid `{found}` が run.json `{uid}` と違います"
             )));
         }
-    }
-    Ok(())
+        Ok(())
+    })
 }
 
 fn check_data(meta: &RunMeta) -> Result<()> {
@@ -493,6 +480,296 @@ fn sibling_runs(run_dir: &Path) -> HashMap<String, std::path::PathBuf> {
         }
     }
     out
+}
+
+// ---------------------------------------------------------------------------
+// The deep checks: everything whose cost scales with the size of the run.
+// ---------------------------------------------------------------------------
+
+/// Runs the shallow invariants, then the ones whose cost scales with the run.
+///
+/// Recomputing the three hashes is what stops a run whose `parameters` were
+/// edited afterwards from still claiming the old `config_hash`, and walking
+/// `artifacts/` is what stops a generated file from living outside the record.
+/// `runvault sync` runs this before it copies anything and refuses to send a run
+/// that fails it, so that the aggregation layer never takes in a broken run.
+///
+/// `events.jsonl` is read twice, once by the shallow `run_uid` check and once
+/// here. Both passes stream the file a line at a time, and the cost is small
+/// next to rehashing the artifacts.
+pub fn deep(run_dir: &Path) -> Result<()> {
+    shallow(run_dir)?;
+    let meta: RunMeta = files::read_json(&run_dir.join("run.json"))?;
+    check_hashes(run_dir, &meta)?;
+    check_locks(run_dir, &meta)?;
+    check_manifest_contents(run_dir)?;
+    check_terminal_events(run_dir)?;
+    Ok(())
+}
+
+fn compare_hash(field: &str, recorded: &str, recomputed: &str) -> Result<()> {
+    if recorded != recomputed {
+        return Err(Error::verify(format!(
+            "{field} が元データと一致しません (記録 {recorded}, 再計算 {recomputed})"
+        )));
+    }
+    Ok(())
+}
+
+/// The three hashes, recomputed from the files they claim to summarize.
+///
+/// Each recomputed value is fed to the next hash rather than the recorded one:
+/// they have just been proved equal, and using the recomputed value keeps the
+/// chain identical to the one `Run::start` built.
+fn check_hashes(run_dir: &Path, meta: &RunMeta) -> Result<()> {
+    let config: ConfigEnvelope = files::read_json(&run_dir.join("config.json"))?;
+    let exclusions = Exclusions::resolve(&config.runvault, &config.parameters)?;
+    let code = meta.code.as_ref();
+
+    let env_hash = hash::env_hash(
+        &meta.env.os,
+        &meta.env.arch,
+        meta.env.rustc_version.as_deref(),
+        meta.env.python_version.as_deref(),
+        code.map(|c| c.locks.as_slice()).unwrap_or(&[]),
+    );
+    compare_hash("env_hash", &meta.env.env_hash, &env_hash)?;
+
+    let config_hash = hash::config_hash(&config.parameters, &exclusions, &meta.data)?;
+    compare_hash("config_hash", &meta.config_hash, &config_hash)?;
+
+    let execution_hash = hash::execution_hash(
+        &config_hash,
+        &config.parameters,
+        &exclusions,
+        code,
+        &env_hash,
+    )?;
+    compare_hash("execution_hash", &meta.execution_hash, &execution_hash)
+}
+
+/// A recorded relative path, resolved without letting it leave the run directory.
+fn inside_run(run_dir: &Path, source: &str, rel: &str) -> Result<PathBuf> {
+    let path = Path::new(rel);
+    if path.is_absolute()
+        || path
+            .components()
+            .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        return Err(Error::verify(format!(
+            "{source} の path `{rel}` が run ディレクトリの外を指しています"
+        )));
+    }
+    Ok(run_dir.join(path))
+}
+
+/// The lock files under `lock/` still hash to what `env_hash` was told.
+///
+/// Nothing else covers them: `manifest.csv` records only `artifacts/` and
+/// `logs/`, so without this a rewritten `Cargo.lock` would keep an `env_hash`
+/// that describes a different set of dependencies.
+fn check_locks(run_dir: &Path, meta: &RunMeta) -> Result<()> {
+    let Some(code) = &meta.code else {
+        return Ok(());
+    };
+    for lock in &code.locks {
+        let path = inside_run(run_dir, "run.json の code.locks[]", &lock.file)?;
+        if !path.is_file() {
+            return Err(Error::verify(format!(
+                "code.locks[] の `{}` が実在しません",
+                lock.file
+            )));
+        }
+        let (digest, _) = files::digest_file_as(&path, lock.hash.algorithm)?;
+        if digest != lock.hash.value {
+            return Err(Error::verify(format!(
+                "`{}` のハッシュが run.json と違います (記録 {}, 実体 {digest})",
+                lock.file, lock.hash.value
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// Every file `manifest.csv` names exists and still hashes to what it recorded,
+/// and nothing under `artifacts/` or `logs/` is missing from it.
+///
+/// Both halves are needed. Without the first, "that figure came from this run"
+/// stops being true; without the second, a generated file can exist that the
+/// record never mentions, and the identity of the run is only half guaranteed.
+fn check_manifest_contents(run_dir: &Path) -> Result<()> {
+    let mut recorded: BTreeSet<String> = BTreeSet::new();
+
+    if let Some((header, rows)) = read_csv(&run_dir.join("manifest.csv"))? {
+        for row in &rows {
+            let rel = column(&header, row, "path");
+            let path = inside_run(run_dir, "manifest.csv", rel)?;
+            if !path.is_file() {
+                return Err(Error::verify(format!(
+                    "manifest.csv の path `{rel}` が実在しません"
+                )));
+            }
+
+            // A row whose function cannot be named is a row that cannot be
+            // checked, and a run is not verified because a check was skipped.
+            let named = column(&header, row, "algorithm");
+            let algorithm = Algorithm::parse(named).ok_or_else(|| {
+                Error::verify(format!(
+                    "manifest.csv の `{rel}` の algorithm `{named}` は照合できません"
+                ))
+            })?;
+            let (digest, bytes) = files::digest_file_as(&path, algorithm)?;
+
+            let recorded_bytes = column(&header, row, "bytes");
+            if recorded_bytes != bytes.to_string() {
+                return Err(Error::verify(format!(
+                    "manifest.csv の `{rel}` のバイト数が違います (記録 {recorded_bytes}, 実体 {bytes})"
+                )));
+            }
+            let recorded_digest = column(&header, row, "digest");
+            if recorded_digest != digest {
+                return Err(Error::verify(format!(
+                    "manifest.csv の `{rel}` のハッシュが違います (記録 {recorded_digest}, 実体 {digest})"
+                )));
+            }
+            recorded.insert(rel.to_string());
+        }
+    }
+
+    for sub in ["artifacts", "logs"] {
+        for rel in files::walk_files(&run_dir.join(sub), run_dir)? {
+            if !recorded.contains(&rel) {
+                return Err(Error::verify(format!(
+                    "`{rel}` が manifest.csv にありません (記録に載らない生成物です)"
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Calls `f` with each non-blank line of `events.jsonl` and its 1-based number.
+///
+/// The file is streamed rather than read whole: it is the one file in a run
+/// whose size has no bound.
+fn for_each_event(
+    path: &Path,
+    mut f: impl FnMut(usize, &serde_json::Value) -> Result<()>,
+) -> Result<()> {
+    let file = match std::fs::File::open(path) {
+        Ok(file) => file,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(Error::io(path, e)),
+    };
+    for (i, line) in std::io::BufReader::new(file).lines().enumerate() {
+        let line = line.map_err(|e| Error::io(path, e))?;
+        if line.trim().is_empty() {
+            continue;
+        }
+        let value: serde_json::Value = serde_json::from_str(&line).map_err(|e| {
+            Error::verify(format!(
+                "events.jsonl の {} 行目が JSON ではありません: {e}",
+                i + 1
+            ))
+        })?;
+        f(i + 1, &value)?;
+    }
+    Ok(())
+}
+
+fn event_str(value: &serde_json::Value, field: &str, line: usize) -> Result<String> {
+    value
+        .get(field)
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+        .ok_or_else(|| {
+            Error::verify(format!(
+                "events.jsonl の {line} 行目: {field} が文字列としてありません"
+            ))
+        })
+}
+
+fn event_num(value: &serde_json::Value, field: &str, line: usize) -> Result<f64> {
+    value
+        .get(field)
+        .and_then(serde_json::Value::as_f64)
+        .ok_or_else(|| {
+            Error::verify(format!(
+                "events.jsonl の {line} 行目: {field} が数値としてありません"
+            ))
+        })
+}
+
+/// A `terminal` row agrees with the `observation` rows it summarizes.
+///
+/// `outcome` is deliberately not re-derived: which outcome a trajectory earned
+/// depends on the experiment's judge, not on the file (design note §3.10).
+fn check_terminal_events(run_dir: &Path) -> Result<()> {
+    let path = run_dir.join("events.jsonl");
+    let mut last_observed: HashMap<String, f64> = HashMap::new();
+    let mut terminals: Vec<(usize, String, f64, bool, Option<f64>)> = Vec::new();
+
+    for_each_event(&path, |line, value| {
+        match value.get("schema").and_then(|v| v.as_str()) {
+            Some("observation") => {
+                let unit = event_str(value, "unit_id", line)?;
+                let t = event_num(value, "t", line)?;
+                last_observed
+                    .entry(unit)
+                    .and_modify(|max| {
+                        if t > *max {
+                            *max = t;
+                        }
+                    })
+                    .or_insert(t);
+            }
+            Some("terminal") => {
+                let unit = event_str(value, "unit_id", line)?;
+                let t = event_num(value, "t", line)?;
+                let censored = value
+                    .get("censored")
+                    .and_then(serde_json::Value::as_bool)
+                    .ok_or_else(|| {
+                        Error::verify(format!(
+                            "events.jsonl の {line} 行目: terminal に censored がありません"
+                        ))
+                    })?;
+                let budget = value.get("budget").and_then(serde_json::Value::as_f64);
+                terminals.push((line, unit, t, censored, budget));
+            }
+            _ => {}
+        }
+        Ok(())
+    })?;
+
+    for (line, unit, t, censored, budget) in terminals {
+        let Some(&observed) = last_observed.get(&unit) else {
+            return Err(Error::verify(format!(
+                "events.jsonl の {line} 行目: terminal の unit_id `{unit}` が observation に現れません"
+            )));
+        };
+        if t != observed {
+            return Err(Error::verify(format!(
+                "events.jsonl の {line} 行目: terminal の t={t} が unit_id `{unit}` の observation の最大 t={observed} と違います"
+            )));
+        }
+        if censored {
+            match budget {
+                Some(budget) if budget == t => {}
+                Some(budget) => {
+                    return Err(Error::verify(format!(
+                        "events.jsonl の {line} 行目: censored なのに t={t} が budget={budget} と違います"
+                    )));
+                }
+                None => {
+                    return Err(Error::verify(format!(
+                        "events.jsonl の {line} 行目: censored なのに budget がありません"
+                    )));
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

@@ -59,6 +59,18 @@ impl Algorithm {
             Self::Sha256 => "sha256",
         }
     }
+
+    /// The algorithm a recorded name refers to, or `None` when it names none.
+    ///
+    /// A digest whose function cannot be identified is not a digest that can be
+    /// checked, so the caller has to say so rather than pass over the row.
+    pub fn parse(name: &str) -> Option<Self> {
+        match name {
+            "blake3" => Some(Self::Blake3),
+            "sha256" => Some(Self::Sha256),
+            _ => None,
+        }
+    }
 }
 
 /// What a data hash covers.
@@ -387,13 +399,15 @@ impl Hash {
         }
     }
 
-    pub(crate) fn algorithm_str(&self) -> &'static str {
+    /// The hash function's name as every file spells it.
+    pub fn algorithm_str(&self) -> &'static str {
         self.algorithm.as_str()
     }
 }
 
 impl Dataset {
-    pub(crate) fn hash_scope_str(&self) -> &'static str {
+    /// What the digest covers, or the empty string when there is no digest.
+    pub fn hash_scope_str(&self) -> &'static str {
         self.hash_scope.map(HashScope::as_str).unwrap_or("")
     }
 }
