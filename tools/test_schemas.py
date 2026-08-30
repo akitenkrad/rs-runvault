@@ -77,7 +77,8 @@ CONFIG = {"schema_version": "1.0", "run_uid": UID,
 REPORT = {
     "schema_version": "1.0", "vocab_version": "1.0", "generated_at": TS, "freshness_hours": 24,
     "experiments": [{"experiment": "p00000009-schelling", "repo_id": "ssr", "n_runs": 3,
-                     "n_finished": 3, "last_run_at": TS, "primary_metrics": ["segregation_index"]}],
+                     "n_finished": 3, "last_run_at": TS, "primary_metrics": ["segregation_index"],
+                     "git_remote": "git@github.com:akitenkrad/schelling1971.git"}],
     "runs": [{"run_key": UID, "run_uid": UID, "run_slug": SLUG, "repo_id": "ssr",
               "experiment": "p00000009-schelling",
               "subcommand": "main", "state": "finished", "created_at": TS,
@@ -246,6 +247,9 @@ def main() -> int:
                                "experiment": "p00000009-schelling",
                                "subcommand": None, "state": "finished", "created_at": TS,
                                "git_dirty": None, "metrics": {}}]), True),
+        # legacy run しか無い実験では origin の記録が無い．null を許す．
+        ("runs.report: git_remote は null にできる", "runs.report", None,
+         mutate(REPORT, experiments=[{**REPORT["experiments"][0], "git_remote": None}]), True),
         ("runs.report: run_key は必須", "runs.report", None,
          mutate(REPORT, runs=[{k: v for k, v in REPORT["runs"][0].items() if k != "run_key"}]), "run_key"),
         # 画面は repo_id から集約先の run ディレクトリを引く．欠けると詳細が開けない．

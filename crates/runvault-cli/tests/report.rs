@@ -224,6 +224,9 @@ fn the_headline_metrics_are_results_rather_than_bookkeeping() {
     // number the experiment was run to produce.
     assert_eq!(primary, &[json!("segregation_index")], "{primary:?}");
     assert_eq!(experiments[0]["cost_usd"], json!(0.25));
+    // origin は run.json にしか無い．`Origin::Manual` の run は code を持たないので
+    // ここでは null になり，**埋められない**ことがそのまま出る．
+    assert_eq!(experiments[0]["git_remote"], Value::Null);
 }
 
 #[test]

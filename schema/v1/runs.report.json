@@ -84,6 +84,13 @@
             ],
             "minimum": 0
           },
+          "git_remote": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "そのリポジトリの origin. run.json にしか無いので, legacy run しか持たない実験では null"
+          },
           "primary_metrics": {
             "type": "array",
             "maxItems": 3,

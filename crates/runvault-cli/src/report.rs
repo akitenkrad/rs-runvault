@@ -166,7 +166,22 @@ fn experiments(
             "last_run_at": moment(&row[4]),
             "primary_metrics": Value::Array(Vec::new()),
             "cost_usd": Value::Null,
+            "git_remote": Value::Null,
         }));
+        Ok(())
+    })?;
+
+    // そのリポジトリの origin. `run.json` にしか無いので, legacy run しか無い実験は
+    // null のままになる — 埋めずに「記録が無い」と分かる形で残す.
+    let sql = format!(
+        "SELECT repo_id, experiment, arg_max(git_remote, created_at) AS remote
+         FROM {runs_table} WHERE git_remote IS NOT NULL GROUP BY 1, 2"
+    );
+    let mut remotes: BTreeMap<(String, Option<String>), String> = BTreeMap::new();
+    each_row(connection, &sql, |row| {
+        if let Some(remote) = text(&row[2]) {
+            remotes.insert((text(&row[0]).unwrap_or_default(), text(&row[1])), remote);
+        }
         Ok(())
     })?;
 
@@ -222,6 +237,9 @@ fn experiments(
         }
         if let Some(value) = cost.get(&key) {
             experiment["cost_usd"] = json!(value);
+        }
+        if let Some(remote) = remotes.get(&key) {
+            experiment["git_remote"] = json!(remote);
         }
     }
     Ok(out)
