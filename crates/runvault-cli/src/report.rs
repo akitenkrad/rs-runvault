@@ -239,7 +239,7 @@ fn runs(
 ) -> Result<Vec<Value>, String> {
     let sql = format!(
         "SELECT run_key, run_uid, run_slug, experiment, subcommand, state, created_at,
-                duration_sec, git_dirty, title, work_id, obsidian_note
+                duration_sec, git_dirty, title, work_id, obsidian_note, repo_id
          FROM {runs_table} WHERE created_at IS NOT NULL
          ORDER BY created_at DESC LIMIT {max_runs}"
     );
@@ -254,6 +254,9 @@ fn runs(
         };
         let mut entry = Map::new();
         entry.insert("run_key".into(), json!(key));
+        // どのリポジトリの run かは，集約先での置き場を引くのに要る
+        // (画面が run ディレクトリを開いて条件やハッシュを出すため)．
+        entry.insert("repo_id".into(), json!(text(&row[12])));
         entry.insert("run_uid".into(), json!(text(&row[1])));
         entry.insert("run_slug".into(), json!(text(&row[2])));
         entry.insert("experiment".into(), json!(text(&row[3])));

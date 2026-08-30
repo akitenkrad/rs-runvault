@@ -102,6 +102,7 @@
         "additionalProperties": false,
         "required": [
           "run_key",
+          "repo_id",
           "experiment",
           "subcommand",
           "state",
@@ -237,6 +238,10 @@
           "run_key": {
             "$ref": "common.json#/$defs/nonempty",
             "description": "索引の主キー. legacy は legacy:<repo_id>:<相対パス>"
+          },
+          "repo_id": {
+            "$ref": "common.json#/$defs/slug",
+            "description": "どのリポジトリの run か. 集約先での置き場 (<集約先>/<repo_id>/…) を引くのに要る"
           }
         }
       }

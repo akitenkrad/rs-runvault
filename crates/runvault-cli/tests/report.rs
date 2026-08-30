@@ -189,6 +189,8 @@ fn a_legacy_run_appears_without_being_given_a_state_it_never_recorded() {
     // `unfinished` means "written against this specification and holding no
     // status.json". A run from 2024 that completed is not that.
     assert_eq!(runs[0]["state"], Value::Null);
+    // legacy でも置き場は引けなければならない．
+    assert_eq!(runs[0]["repo_id"], json!(REPO_ID));
     assert_eq!(runs[0]["experiment"], Value::Null);
     assert_eq!(runs[0]["run_uid"], Value::Null);
 
@@ -239,6 +241,8 @@ fn a_replication_carries_its_paper_and_the_gap_from_the_reported_value() {
     );
     assert_eq!(run["replication"]["targets"], json!(["Table 3"]));
     assert_eq!(run["jira"], json!(["MYTASK-3058"]));
+    // 画面はこれを使って集約先の run ディレクトリを引き，条件とハッシュを出す．
+    assert_eq!(run["repo_id"], json!(REPO_ID));
     assert!(run["obsidian_note"].as_str().is_some());
 
     // 0.83 reproduced against 0.90 reported.
