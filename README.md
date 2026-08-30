@@ -72,7 +72,31 @@ failure — the presence of the lock alone never means "still running".
 | `runvault path --experiment E --latest --subcommand run --standalone` | …ignoring the ones a sweep started |
 | `runvault path --experiment E --children-of <run_uid>` | the runs of one sweep |
 | `runvault verify <run>` | the invariants that span a run's files |
+| `runvault verify <run> --deep` | …and recompute the hashes, rehash the artifacts, walk `events.jsonl` |
 | `runvault gc` | record the runs whose process was killed |
+| `runvault sync --repo-id R --vault V --dry-run` | what the aggregation repository would receive |
+| `runvault sync --repo-id R --vault V` | copy the light half of every run into it |
+| `runvault query --vault V --refresh` | rebuild `index/*.parquet` from that repository |
+| `runvault query --vault V "SELECT …"` | ask a question across every repository at once |
+
+### Keeping the record off one machine
+
+A replication repository ignores `results/`, so nothing but a copy puts the
+record anywhere else. `runvault sync` copies the files that reconstruct the
+condition, the result, the environment and the provenance, and leaves
+`artifacts/` where they are — `manifest.csv` already carries their identity.
+
+The destination has to say what it is. Without a `runvault-vault.toml` declaring
+`visibility = "private"`, the command stops rather than guessing: a run's
+`events.jsonl` can hold prompts, captures and fragments of internal data, and a
+git history does not forget. A run that does not declare itself public needs
+`--allow-internal`, and one that fails `verify --deep` is not sent at all.
+
+`runvault query --refresh` walks that repository and writes seven parquet tables
+whose columns are defined by `schema/v1/index.columns.json`. Runs written before
+this specification existed are indexed beside the rest, keyed by
+`legacy:<repo_id>:<path>` and carrying `run_uid IS NULL` — nothing is invented
+for the columns they cannot fill.
 
 ## Layout
 
@@ -80,7 +104,8 @@ failure — the presence of the lock alone never means "still running".
 | --- | --- |
 | `schema/v1/` | Frozen JSON Schemas, the flattened index columns, and the core vocabulary. These files are the specification. |
 | `schema/v1/testvectors/` | Canonicalization and hash vectors, so two implementations can be shown to agree. |
-| `crates/runvault/` | The Rust reference implementation and the `runvault` binary. |
+| `crates/runvault/` | The Rust reference implementation. Depending on it to write runs pulls in no database. |
+| `crates/runvault-cli/` | The `runvault` binary, and the DuckDB index behind `query`. |
 | `tools/` | The validators that keep the schemas and the design note honest. |
 
 The design note lives in the author's Obsidian vault:

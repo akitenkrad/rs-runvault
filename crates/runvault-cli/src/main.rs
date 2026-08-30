@@ -1,16 +1,18 @@
 //! The `runvault` command line.
 //!
-//! Phase 1 covers the subcommands that operate on a single machine's run
-//! directories: finding one, checking one, and cleaning up after a killed one.
-//! `sync`, `query` and `report` arrive with the aggregation layer.
+//! The subcommands that operate on a single machine's run directories:
+//! finding one, checking one, and cleaning up after a killed one. `sync`,
+//! `query` and `report` arrive with the aggregation layer.
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+mod index;
+
 use clap::{Args, Parser, Subcommand};
 use runvault::gc::Outcome;
 use runvault::meta::RunMeta;
-use runvault::{Result, files, paths, verify};
+use runvault::{Result, files, paths, sync, verify};
 
 #[derive(Parser)]
 #[command(name = "runvault", version, about = "Plain-file experiment tracking")]
@@ -29,6 +31,10 @@ enum Command {
     Gc(GcArgs),
     /// Read run directories written before this specification existed.
     Legacy(LegacyArgs),
+    /// Copy the light half of every run to the aggregation repository.
+    Sync(SyncArgs),
+    /// Rebuild the index, run SQL against it, or both.
+    Query(QueryArgs),
 }
 
 #[derive(Args)]
@@ -75,6 +81,12 @@ struct PathArgs {
 struct VerifyArgs {
     /// The run directory.
     run: PathBuf,
+    /// Also recompute the hashes, rehash the artifacts and walk `events.jsonl`.
+    ///
+    /// The cost scales with the size of the run, which is why it is not what
+    /// every execution does on its way out. `sync` runs it before it copies.
+    #[arg(long)]
+    deep: bool,
 }
 
 #[derive(Args)]
@@ -94,6 +106,38 @@ struct LegacyArgs {
 }
 
 #[derive(Args)]
+struct SyncArgs {
+    /// Where the experiment directories live.
+    #[arg(long, default_value = "results")]
+    results_root: PathBuf,
+    /// The stable repository id. Legacy keys are built from it, and a canonical
+    /// run whose `run.json` disagrees with it is an error rather than a guess.
+    #[arg(long)]
+    repo_id: String,
+    /// The aggregation repository. It must declare itself private.
+    #[arg(long)]
+    vault: Option<PathBuf>,
+    /// List what would be copied, and how large it is, without writing.
+    #[arg(long)]
+    dry_run: bool,
+    /// Also send runs that did not declare themselves public.
+    #[arg(long)]
+    allow_internal: bool,
+}
+
+#[derive(Args)]
+struct QueryArgs {
+    /// The SQL to run. The table files are `index/<name>.parquet`.
+    sql: Option<String>,
+    /// The aggregation repository. The index is written inside it.
+    #[arg(long)]
+    vault: Option<PathBuf>,
+    /// Walk the repository and rebuild `index/*.parquet` first.
+    #[arg(long)]
+    refresh: bool,
+}
+
+#[derive(Args)]
 struct GcArgs {
     /// Where the experiment directories live.
     #[arg(long, default_value = "results")]
@@ -110,6 +154,8 @@ fn main() -> ExitCode {
         Command::Verify(args) => cmd_verify(&args),
         Command::Gc(args) => cmd_gc(&args),
         Command::Legacy(args) => cmd_legacy(&args),
+        Command::Sync(args) => cmd_sync(&args),
+        Command::Query(args) => cmd_query(&args),
     };
     match result {
         Ok(code) => code,
@@ -231,9 +277,15 @@ fn is_finished(dir: &Path) -> bool {
 }
 
 fn cmd_verify(args: &VerifyArgs) -> Result<ExitCode> {
-    match verify::shallow(&args.run) {
+    let checked = if args.deep {
+        verify::deep(&args.run)
+    } else {
+        verify::shallow(&args.run)
+    };
+    match checked {
         Ok(()) => {
-            println!("ok {}", args.run.display());
+            let depth = if args.deep { "ok (deep)" } else { "ok" };
+            println!("{depth} {}", args.run.display());
             Ok(ExitCode::SUCCESS)
         }
         Err(e) => {
@@ -334,6 +386,191 @@ fn cmd_legacy(args: &LegacyArgs) -> Result<ExitCode> {
         return Ok(ExitCode::FAILURE);
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// Where runs are aggregated when the caller names no other place.
+fn default_vault() -> PathBuf {
+    let home = std::env::var("HOME").unwrap_or_default();
+    PathBuf::from(home).join("research").join("runs")
+}
+
+fn cmd_sync(args: &SyncArgs) -> Result<ExitCode> {
+    let vault = args.vault.clone().unwrap_or_else(default_vault);
+    // Reading the declaration first means a destination that never said it was
+    // private stops the command before it has looked at a single run.
+    let (declared_at, config) = sync::load_vault_config(&vault)?;
+    println!(
+        "集約先 {} ({} が宣言，{} MiB 超は zstd)",
+        vault.display(),
+        declared_at.join(sync::VAULT_CONFIG).display(),
+        config.compress_over_mib
+    );
+
+    let options = sync::SyncOptions {
+        allow_internal: args.allow_internal || config.allow_internal,
+        compress_over_bytes: config.compress_over_bytes(),
+    };
+    let planned = sync::plan_all(&args.results_root, &args.repo_id, &vault, &options)?;
+
+    let (mut sent, mut bytes, mut unverified) = (0u64, 0u64, 0u64);
+    for entry in &planned {
+        match entry {
+            sync::Planned::Skipped { run_dir, reason } => {
+                if reason.starts_with("verify") {
+                    unverified += 1;
+                }
+                println!("skip\t{}\t{reason}", relative_to_cwd(run_dir).display());
+            }
+            sync::Planned::Send(plan) => {
+                sent += 1;
+                bytes += plan.bytes();
+                println!(
+                    "{}\t{} → {}\t{} ファイル・{} バイト",
+                    if args.dry_run { "would send" } else { "send" },
+                    relative_to_cwd(&plan.run_dir).display(),
+                    plan.dest.display(),
+                    plan.files.len(),
+                    plan.bytes()
+                );
+                // What enters a git history is worth seeing before it does.
+                for file in &plan.files {
+                    println!(
+                        "  {}\t{}\t{} バイト",
+                        file.stored_path,
+                        match file.compression {
+                            sync::Compression::None => "そのまま",
+                            sync::Compression::Zstd => "zstd",
+                        },
+                        file.bytes
+                    );
+                }
+                if !args.dry_run {
+                    let synced = sync::execute(plan)?;
+                    println!("  受領証 generation {}", synced.receipt.generation);
+                    // Not deleted: the aggregation copy may be the only one left.
+                    for path in &synced.left_behind {
+                        println!("  残置\t{path} (前回は送ったが今回は送っていません)");
+                    }
+                }
+            }
+        }
+    }
+
+    println!(
+        "\n{sent} run・{bytes} バイトを{}",
+        if args.dry_run {
+            "同期します (--dry-run なので書いていません)"
+        } else {
+            "同期しました"
+        }
+    );
+    // A run held back for being internal is a decision; one held back for
+    // contradicting itself is a problem, and the exit code says so.
+    Ok(if unverified > 0 {
+        eprintln!("{unverified} 件が verify --deep に通らず送られていません");
+        ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
+    })
+}
+
+fn cmd_query(args: &QueryArgs) -> Result<ExitCode> {
+    let vault = args.vault.clone().unwrap_or_else(default_vault);
+    if !args.refresh && args.sql.is_none() {
+        eprintln!("runvault: --refresh か SQL のどちらかが要ります");
+        return Ok(ExitCode::FAILURE);
+    }
+
+    if args.refresh {
+        let refreshed = index::refresh(&vault).map_err(runvault::Error::Spec)?;
+        for (table, rows) in &refreshed.counts {
+            println!("{table}\t{rows} 行");
+        }
+        // A run the walk could not read is reported rather than left out
+        // quietly: an index that is short by one run looks exactly like one
+        // that is complete.
+        for note in &refreshed.notes {
+            eprintln!("note: {note}");
+        }
+    }
+
+    let Some(sql) = &args.sql else {
+        return Ok(ExitCode::SUCCESS);
+    };
+
+    // The documented queries name the tables as `index/runs.parquet`, so the
+    // relative paths have to resolve against the repository, not the shell.
+    std::env::set_current_dir(&vault)?;
+    let connection = duckdb::Connection::open_in_memory().map_err(to_error)?;
+    let mut statement = connection.prepare(sql).map_err(to_error)?;
+    let mut rows = statement.query([]).map_err(to_error)?;
+
+    let mut printed_header = false;
+    let mut count = 0usize;
+    while let Some(row) = rows.next().map_err(to_error)? {
+        let statement = row.as_ref();
+        if !printed_header {
+            println!("{}", statement.column_names().join("\t"));
+            printed_header = true;
+        }
+        let cells: Vec<String> = (0..statement.column_count())
+            .map(|i| {
+                row.get::<usize, duckdb::types::Value>(i)
+                    .map(render)
+                    .unwrap_or_default()
+            })
+            .collect();
+        println!("{}", cells.join("\t"));
+        count += 1;
+    }
+    eprintln!("{count} 行");
+    Ok(ExitCode::SUCCESS)
+}
+
+/// A value as a column of text, with `NULL` spelled out rather than blank.
+///
+/// Every scalar the index can hold is named. Falling back to the debug format
+/// would print `BigInt(2)` where a count belongs, which is the kind of output
+/// that quietly ends up pasted into a table.
+fn render(value: duckdb::types::Value) -> String {
+    use duckdb::types::Value as V;
+    match value {
+        V::Null => "NULL".into(),
+        V::Boolean(v) => v.to_string(),
+        V::Text(v) => v,
+        V::TinyInt(v) => v.to_string(),
+        V::SmallInt(v) => v.to_string(),
+        V::Int(v) => v.to_string(),
+        V::BigInt(v) => v.to_string(),
+        V::HugeInt(v) => v.to_string(),
+        V::UTinyInt(v) => v.to_string(),
+        V::USmallInt(v) => v.to_string(),
+        V::UInt(v) => v.to_string(),
+        V::UBigInt(v) => v.to_string(),
+        V::Float(v) => v.to_string(),
+        V::Double(v) => v.to_string(),
+        V::Decimal(v) => v.to_string(),
+        V::Timestamp(unit, count) => render_timestamp(unit, count),
+        other => format!("{other:?}"),
+    }
+}
+
+/// A DuckDB timestamp as the UTC instant the index stored.
+fn render_timestamp(unit: duckdb::types::TimeUnit, count: i64) -> String {
+    use duckdb::types::TimeUnit;
+    let micros = match unit {
+        TimeUnit::Second => count.saturating_mul(1_000_000),
+        TimeUnit::Millisecond => count.saturating_mul(1_000),
+        TimeUnit::Microsecond => count,
+        TimeUnit::Nanosecond => count / 1_000,
+    };
+    chrono::DateTime::from_timestamp_micros(micros)
+        .map(|at| at.format("%Y-%m-%d %H:%M:%S%.6f").to_string())
+        .unwrap_or_else(|| count.to_string())
+}
+
+fn to_error(e: duckdb::Error) -> runvault::Error {
+    runvault::Error::Spec(e.to_string())
 }
 
 fn relative_to_cwd(path: &Path) -> PathBuf {

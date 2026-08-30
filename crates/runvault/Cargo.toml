@@ -16,7 +16,6 @@ schema-gen = ["dep:schemars"]
 [dependencies]
 blake3.workspace = true
 chrono.workspace = true
-clap.workspace = true
 csv.workspace = true
 globset.workspace = true
 schemars = { workspace = true, optional = true }
@@ -37,7 +36,3 @@ tempfile.workspace = true
 [[test]]
 name = "schema_parity"
 required-features = ["schema-gen"]
-
-[[bin]]
-name = "runvault"
-path = "src/bin/runvault.rs"

@@ -1,0 +1,30 @@
+[package]
+name = "runvault-cli"
+description = "Command line for runvault, with the DuckDB index"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+# The index bundles DuckDB, which is why it lives here and not in `runvault`:
+# the replication repositories depend on the library to *write* runs, and must
+# not compile a database to do it.
+[dependencies]
+runvault = { path = "../runvault", version = "0.1.0" }
+chrono.workspace = true
+clap.workspace = true
+csv.workspace = true
+duckdb = { workspace = true, features = ["bundled"] }
+serde.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
+zstd.workspace = true
+
+[dev-dependencies]
+jsonschema.workspace = true
+
+[[bin]]
+name = "runvault"
+path = "src/main.rs"

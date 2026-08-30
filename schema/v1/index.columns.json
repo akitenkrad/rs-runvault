@@ -43,7 +43,8 @@
         {
           "name": "experiment",
           "type": "string",
-          "nullable": false
+          "nullable": true,
+          "note": "legacy run が results 直下に置かれていると，どの実験のものか記録に無い．代表値で埋めずに null にする"
         },
         {
           "name": "subcommand",
