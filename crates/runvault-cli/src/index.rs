@@ -113,6 +113,39 @@ impl IndexRows {
     }
 }
 
+/// One metric row after the retired vocabulary has been applied.
+enum Placed {
+    /// Belongs in `metrics`, under this name.
+    Metric(String),
+    /// Belongs in a column of the run's own row.
+    Column(String),
+    /// Could not be placed. Reported rather than dropped in silence.
+    Refused(String),
+}
+
+/// Where one metric name belongs, asked once while the index is built.
+///
+/// A query must never have to know which names used to be something else, so
+/// the retired vocabulary is resolved here and nowhere later.
+fn place(name: &str) -> Placed {
+    use runvault::vocabulary::Resolved;
+    match runvault::vocabulary::get().resolve_metric(name) {
+        Resolved::Keep(name) => Placed::Metric(name.to_string()),
+        // Only the run's own row can be filled in from here; a destination in
+        // another table would need a row this metric does not identify.
+        Resolved::MoveTo {
+            table: "runs",
+            column,
+        } => Placed::Column(column.to_string()),
+        Resolved::MoveTo { table, column } => Placed::Refused(format!(
+            "`{name}` の移動先 `{table}.{column}` は runs 以外の表なので置けません"
+        )),
+        Resolved::Unplaceable(destination) => Placed::Refused(format!(
+            "`{name}` の移動先 `{destination}` が <表>.<列> の形ではありません"
+        )),
+    }
+}
+
 /// Reads the timestamp the record wrote and normalizes it to UTC.
 ///
 /// The index compares runs made on machines in different places, so the column
@@ -243,6 +276,39 @@ fn flatten_canonical(
     };
     let status: Option<RunStatus> = stored_json(dir, receipt, "status.json");
     let key = receipt.run_key.clone();
+
+    // The metrics are read before the run's own row is built: a retired name
+    // may name one of that row's columns.
+    let mut metric_rows: Vec<Row> = Vec::new();
+    let mut moved: BTreeMap<String, f64> = BTreeMap::new();
+    if let Some((header, csv)) = stored_csv(dir, receipt, "metrics.csv") {
+        for record in &csv {
+            let name = field(&header, record, "name").unwrap_or_default();
+            let value = field(&header, record, "value").and_then(|v| v.parse::<f64>().ok());
+            match place(name) {
+                Placed::Metric(name) => {
+                    let mut row = Row::new();
+                    row.insert("run_key", Cell::Text(key.clone()));
+                    row.insert("run_uid", Cell::Text(meta.run_uid.clone()));
+                    row.insert(
+                        "step",
+                        Cell::int(field(&header, record, "step").and_then(|v| v.parse().ok())),
+                    );
+                    row.insert("step_unit", Cell::text(field(&header, record, "step_unit")));
+                    row.insert("scope", Cell::text(field(&header, record, "scope")));
+                    row.insert("name", Cell::Text(name));
+                    row.insert("value", Cell::float(value));
+                    metric_rows.push(row);
+                }
+                Placed::Column(column) => {
+                    if let Some(value) = value {
+                        moved.entry(column).or_insert(value);
+                    }
+                }
+                Placed::Refused(why) => rows.notes.push(format!("{}: {why}", dir.display())),
+            }
+        }
+    }
 
     let code = meta.code.as_ref();
     let rng = meta.rng.as_ref();
@@ -378,7 +444,14 @@ fn flatten_canonical(
     );
     run.insert(
         "duration_sec",
-        Cell::float(status.as_ref().map(|s| s.duration_sec)),
+        // Where both the column and the retired metric hold a value, the column
+        // wins: `status.json` is the record, and the metric was its stand-in.
+        Cell::float(
+            status
+                .as_ref()
+                .map(|s| s.duration_sec)
+                .or_else(|| moved.get("duration_sec").copied()),
+        ),
     );
     run.insert(
         "exit_code",
@@ -463,24 +536,8 @@ fn flatten_canonical(
         rows.push("run_jira", row);
     }
 
-    if let Some((header, csv)) = stored_csv(dir, receipt, "metrics.csv") {
-        for record in &csv {
-            let mut row = Row::new();
-            row.insert("run_key", Cell::Text(key.clone()));
-            row.insert("run_uid", Cell::Text(meta.run_uid.clone()));
-            row.insert(
-                "step",
-                Cell::int(field(&header, record, "step").and_then(|v| v.parse().ok())),
-            );
-            row.insert("step_unit", Cell::text(field(&header, record, "step_unit")));
-            row.insert("scope", Cell::text(field(&header, record, "scope")));
-            row.insert("name", Cell::text(field(&header, record, "name")));
-            row.insert(
-                "value",
-                Cell::float(field(&header, record, "value").and_then(|v| v.parse().ok())),
-            );
-            rows.push("metrics", row);
-        }
+    for row in metric_rows {
+        rows.push("metrics", row);
     }
 
     if let Some((header, csv)) = stored_csv(dir, receipt, "reference.csv") {
@@ -494,7 +551,17 @@ fn flatten_canonical(
             );
             row.insert("step_unit", Cell::text(field(&header, record, "step_unit")));
             row.insert("scope", Cell::text(field(&header, record, "scope")));
-            row.insert("name", Cell::text(field(&header, record, "name")));
+            // A reported value is named the way the reproduced one is, so a
+            // renamed metric has to be renamed on both sides or the two stop
+            // joining. A *moved* name has no column to go to here, and stays.
+            let name = field(&header, record, "name").unwrap_or_default();
+            row.insert(
+                "name",
+                Cell::Text(match place(name) {
+                    Placed::Metric(name) => name,
+                    _ => name.to_string(),
+                }),
+            );
             row.insert(
                 "value",
                 Cell::float(field(&header, record, "value").and_then(|v| v.parse().ok())),
@@ -534,10 +601,35 @@ fn flatten_legacy(dir: &Path, receipt: &SyncReceipt, rows: &mut IndexRows) -> Re
     rows.notes
         .extend(read.notes.iter().map(|n| format!("{}: {n}", dir.display())));
 
+    // A retired name is far likelier here than in a run written against this
+    // specification: the vocabulary retires names that older runs used.
+    let mut metric_rows: Vec<Row> = Vec::new();
+    let mut moved: BTreeMap<String, f64> = BTreeMap::new();
+    for metric in &read.metrics {
+        match place(&metric.name) {
+            Placed::Metric(name) => {
+                let mut row = Row::new();
+                row.insert("run_key", Cell::Text(key.clone()));
+                row.insert("run_uid", Cell::Null);
+                row.insert("step", Cell::int(metric.step));
+                row.insert("step_unit", Cell::text(metric.step_unit.as_deref()));
+                row.insert("scope", Cell::Text(metric.scope.clone()));
+                row.insert("name", Cell::Text(name));
+                row.insert("value", Cell::Float(metric.value));
+                metric_rows.push(row);
+            }
+            Placed::Column(column) => {
+                moved.entry(column).or_insert(metric.value);
+            }
+            Placed::Refused(why) => rows.notes.push(format!("{}: {why}", dir.display())),
+        }
+    }
+
     let mut run = Row::new();
     for column in ALL_RUN_COLUMNS_NULL_FOR_LEGACY {
         run.insert(column, Cell::Null);
     }
+
     run.insert("run_key", Cell::Text(key.clone()));
     run.insert("run_uid", Cell::Null);
     run.insert("repo_id", Cell::Text(receipt.source.repo_id.clone()));
@@ -546,17 +638,24 @@ fn flatten_legacy(dir: &Path, receipt: &SyncReceipt, rows: &mut IndexRows) -> Re
     run.insert("is_replication", Cell::Null);
     run.insert("state", Cell::Null);
     run.insert("created_at", legacy_timestamp(read.timestamp.as_deref())?);
+
+    // A legacy run has no `status.json`, so a retired metric is the only thing
+    // that can fill one of these columns. A destination the row does not have
+    // is reported: inserting an unknown key would be dropped without a word.
+    for (column, value) in &moved {
+        match run.keys().find(|k| *k == column).copied() {
+            Some(column) => {
+                run.insert(column, Cell::Float(*value));
+            }
+            None => rows.notes.push(format!(
+                "{}: 移動先の列 `{column}` が runs にありません",
+                dir.display()
+            )),
+        }
+    }
     rows.push("runs", run);
 
-    for metric in &read.metrics {
-        let mut row = Row::new();
-        row.insert("run_key", Cell::Text(key.clone()));
-        row.insert("run_uid", Cell::Null);
-        row.insert("step", Cell::int(metric.step));
-        row.insert("step_unit", Cell::text(metric.step_unit.as_deref()));
-        row.insert("scope", Cell::Text(metric.scope.clone()));
-        row.insert("name", Cell::Text(metric.name.clone()));
-        row.insert("value", Cell::Float(metric.value));
+    for row in metric_rows {
         rows.push("metrics", row);
     }
     Ok(())

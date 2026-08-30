@@ -39,6 +39,15 @@ pub struct Vocabulary {
     pub freshness_hours: f64,
     /// Default cap on the number of runs in the dashboard report.
     pub max_runs: u64,
+    /// Retired metric names that became another name: old to new.
+    ///
+    /// The rows keep their place in `metrics`; only the name changes.
+    pub renamed_metrics: BTreeMap<String, String>,
+    /// Retired metric names whose value belongs in a column: old to `<table>.<column>`.
+    ///
+    /// The row leaves `metrics` altogether. Where both the column and the
+    /// retired metric hold a value, the column is the one that is kept.
+    pub moved_metrics: BTreeMap<String, String>,
 }
 
 static VOCABULARY: LazyLock<Vocabulary> = LazyLock::new(|| {
@@ -85,6 +94,19 @@ static VOCABULARY: LazyLock<Vocabulary> = LazyLock::new(|| {
 
     let report = |key: &str| doc.get("report").and_then(|t| t.get(key));
 
+    let mapping = |kind: &str| -> BTreeMap<String, String> {
+        doc.get("deprecated")
+            .and_then(|t| t.get(kind))
+            .and_then(|t| t.as_table())
+            .map(|table| {
+                table
+                    .iter()
+                    .filter_map(|(from, to)| to.as_str().map(|to| (from.clone(), to.to_string())))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+
     Vocabulary {
         version: doc
             .get("vocab_version")
@@ -103,6 +125,8 @@ static VOCABULARY: LazyLock<Vocabulary> = LazyLock::new(|| {
         max_runs: report("max_runs")
             .and_then(|v| v.as_integer())
             .unwrap_or(200) as u64,
+        renamed_metrics: mapping("renamed"),
+        moved_metrics: mapping("moved"),
     }
 });
 
@@ -121,6 +145,42 @@ impl Vocabulary {
             Some(reserved) => reserved.scopes.iter().any(|s| s == scope),
             None => true,
         }
+    }
+}
+
+/// What the index should do with one metric name.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Resolved<'a> {
+    /// Keep the row under this name. Unchanged names resolve to themselves.
+    Keep(&'a str),
+    /// Drop the row from `metrics`; the value belongs in `<table>.<column>`.
+    MoveTo {
+        /// The table that owns the column.
+        table: &'a str,
+        /// The column the value belongs in.
+        column: &'a str,
+    },
+    /// The registry names a destination this reader cannot place the value in.
+    Unplaceable(&'a str),
+}
+
+impl Vocabulary {
+    /// Where a metric name belongs once the retired vocabulary is applied.
+    ///
+    /// This is asked once, when `runvault query --refresh` builds the index, so
+    /// that a query never has to know which names used to be something else.
+    pub fn resolve_metric<'a>(&'a self, name: &'a str) -> Resolved<'a> {
+        if let Some(destination) = self.moved_metrics.get(name) {
+            return match destination.split_once('.') {
+                Some((table, column)) if !table.is_empty() && !column.is_empty() => {
+                    Resolved::MoveTo { table, column }
+                }
+                // A destination that is not `<table>.<column>` cannot be filled
+                // in, and pretending otherwise would drop the value silently.
+                _ => Resolved::Unplaceable(destination),
+            };
+        }
+        Resolved::Keep(self.renamed_metrics.get(name).map_or(name, String::as_str))
     }
 }
 
@@ -157,5 +217,71 @@ mod tests {
         let v = get();
         assert!(v.freshness_hours > 0.0);
         assert!(v.max_runs > 0);
+    }
+
+    #[test]
+    fn a_name_the_registry_does_not_retire_stays_as_it_is() {
+        assert_eq!(
+            get().resolve_metric("segregation_index"),
+            Resolved::Keep("segregation_index")
+        );
+    }
+
+    #[test]
+    fn a_name_that_became_a_column_leaves_the_metrics_table() {
+        // The registry retires `wall_sec` in favour of `status.json`, which is
+        // the record of how long a run took.
+        assert_eq!(
+            get().resolve_metric("wall_sec"),
+            Resolved::MoveTo {
+                table: "runs",
+                column: "duration_sec"
+            }
+        );
+    }
+
+    #[test]
+    fn a_destination_that_is_not_a_column_is_refused_rather_than_guessed() {
+        let vocabulary = Vocabulary {
+            version: "1.0".into(),
+            domains: Vec::new(),
+            data_roles: Vec::new(),
+            scopes: Vec::new(),
+            step_units: Vec::new(),
+            event_schemas: Vec::new(),
+            metric_names: BTreeMap::new(),
+            freshness_hours: 24.0,
+            max_runs: 200,
+            renamed_metrics: BTreeMap::from([("asr_old".into(), "asr".into())]),
+            moved_metrics: BTreeMap::from([("elapsed".into(), "somewhere".into())]),
+        };
+        assert_eq!(vocabulary.resolve_metric("asr_old"), Resolved::Keep("asr"));
+        assert_eq!(
+            vocabulary.resolve_metric("elapsed"),
+            Resolved::Unplaceable("somewhere")
+        );
+    }
+
+    #[test]
+    fn a_renamed_name_keeps_its_row_under_the_new_name() {
+        let vocabulary = Vocabulary {
+            version: "1.0".into(),
+            domains: Vec::new(),
+            data_roles: Vec::new(),
+            scopes: Vec::new(),
+            step_units: Vec::new(),
+            event_schemas: Vec::new(),
+            metric_names: BTreeMap::new(),
+            freshness_hours: 24.0,
+            max_runs: 200,
+            renamed_metrics: BTreeMap::from([("segregation".into(), "segregation_index".into())]),
+            moved_metrics: BTreeMap::new(),
+        };
+        // Renaming is not moving: the value is still a metric, and a query that
+        // asks for the new name has to find the old rows under it.
+        assert_eq!(
+            vocabulary.resolve_metric("segregation"),
+            Resolved::Keep("segregation_index")
+        );
     }
 }

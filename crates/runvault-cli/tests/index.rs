@@ -330,3 +330,84 @@ fn asking_for_neither_a_refresh_nor_a_query_is_an_error() {
     let vault = private_vault();
     assert!(!query(vault.path(), &[]).0);
 }
+
+/// A legacy run whose `metrics.csv` still uses a name the registry retired.
+fn legacy_run_with_a_retired_name(results: &Path) -> PathBuf {
+    let dir = results.join("axelrod").join("simulate_20240116_090000");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("metrics.csv"),
+        "t,metric,value\n0,wall_sec,12.5\n0,regions,120\n",
+    )
+    .unwrap();
+    dir
+}
+
+#[test]
+fn a_retired_name_is_resolved_once_when_the_index_is_built() {
+    let results = tempfile::tempdir().unwrap();
+    let vault = private_vault();
+    legacy_run_with_a_retired_name(results.path());
+    sync_all(results.path(), vault.path());
+    assert!(query(vault.path(), &["--refresh"]).0);
+
+    // `wall_sec` was retired in favour of the column `runs.duration_sec`, so a
+    // query never has to know the old name existed.
+    let (ok, stdout) = query(
+        vault.path(),
+        &["SELECT name FROM 'index/metrics.parquet' ORDER BY name"],
+    );
+    assert!(ok, "{stdout}");
+    assert!(!stdout.contains("wall_sec"), "{stdout}");
+    assert!(stdout.contains("regions"), "{stdout}");
+
+    let (ok, stdout) = query(
+        vault.path(),
+        &["SELECT duration_sec FROM 'index/runs.parquet'"],
+    );
+    assert!(ok, "{stdout}");
+    assert!(stdout.contains("12.5"), "{stdout}");
+}
+
+#[test]
+fn the_column_wins_where_both_it_and_the_retired_name_hold_a_value() {
+    let results = tempfile::tempdir().unwrap();
+    let vault = private_vault();
+    let dir = replication_run(results.path(), 42, 0.83);
+
+    // A run that recorded both: `status.json` is the record of how long it took,
+    // and the retired metric was only ever standing in for it.
+    let metrics = std::fs::read_to_string(dir.join("metrics.csv")).unwrap();
+    let uid = serde_json::from_str::<serde_json::Value>(
+        &std::fs::read_to_string(dir.join("run.json")).unwrap(),
+    )
+    .unwrap()["run_uid"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    std::fs::write(
+        dir.join("metrics.csv"),
+        format!("{metrics}{uid},,,run,wall_sec,999.0\n"),
+    )
+    .unwrap();
+
+    sync_all(results.path(), vault.path());
+    assert!(query(vault.path(), &["--refresh"]).0);
+
+    let (ok, stdout) = query(
+        vault.path(),
+        &["SELECT duration_sec FROM 'index/runs.parquet'"],
+    );
+    assert!(ok, "{stdout}");
+    assert!(
+        !stdout.contains("999"),
+        "退役した指標が status.json を上書きしました: {stdout}"
+    );
+
+    let (ok, stdout) = query(
+        vault.path(),
+        &["SELECT count(*) AS n FROM 'index/metrics.parquet' WHERE name = 'wall_sec'"],
+    );
+    assert!(ok, "{stdout}");
+    assert!(stdout.contains("\n0"), "{stdout}");
+}
