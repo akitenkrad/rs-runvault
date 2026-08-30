@@ -1367,4 +1367,8 @@ fn a_sweep_child_is_not_a_run_started_by_hand() {
     let (ok, lines) = runvault(&[&base[..], &["--children-of", &parent_uid]].concat());
     assert!(ok);
     assert_eq!(lines.len(), 2, "{lines:?}");
+    // Parent and children come back in the same shape, so they can be compared.
+    for (line, dir) in lines.iter().zip(&children) {
+        assert_eq!(PathBuf::from(line), std::fs::canonicalize(dir).unwrap());
+    }
 }

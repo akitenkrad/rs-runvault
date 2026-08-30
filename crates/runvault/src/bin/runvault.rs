@@ -143,8 +143,7 @@ fn cmd_path(args: &PathArgs) -> Result<ExitCode> {
             .max_by(|a, b| a.0.cmp(&b.0));
         return Ok(match newest {
             Some((_, dir)) => {
-                // Same shape as the symlink branch, so a shell can compare them.
-                println!("{}", std::fs::canonicalize(&dir).unwrap_or(dir).display());
+                println!("{}", resolved(&dir).display());
                 ExitCode::SUCCESS
             }
             None => {
@@ -156,7 +155,9 @@ fn cmd_path(args: &PathArgs) -> Result<ExitCode> {
 
     let filtering = args.config_hash.is_some() || args.execution_hash.is_some();
     for dir in &selected {
-        println!("{}", dir.display());
+        // Every path this command prints has the same shape, so a caller can
+        // compare a parent against its children without normalizing first.
+        println!("{}", resolved(dir).display());
     }
     // Nothing found is a failing exit code so a shell script can branch on it
     // without parsing the output. Listing everything is not a search, so an empty
@@ -216,6 +217,11 @@ fn finished_at(dir: &Path) -> Option<String> {
         .ok()
         .filter(|status| status.state == runvault::State::Finished)
         .map(|status| status.finished_at)
+}
+
+/// The path as the filesystem sees it, or as given when it cannot be resolved.
+fn resolved(dir: &Path) -> PathBuf {
+    std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf())
 }
 
 /// Whether a run directory holds a `status.json` that says it finished.
