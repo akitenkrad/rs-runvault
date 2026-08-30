@@ -1,9 +1,11 @@
 # runvault コア語彙. 追加・廃止はこのファイルを更新し vocab_version を上げる.
 # 実験固有の語は namespace 付き ( "x.<repo_id>.<name>" ) とし, コア語彙とは衝突させない.
-vocab_version = "1.0"
+vocab_version = "1.1"
 
 [domains]
-values = ["simulation", "llm-safety", "anomaly-detection", "nlp", "other"]
+# analysis = 決定的な解析計算 (RNG を使わない). simulation を名乗ると master_seed が必須になり,
+# 存在しない seed を書くことになるため分けている.
+values = ["simulation", "analysis", "llm-safety", "anomaly-detection", "nlp", "other"]
 
 [data_roles]
 values = ["train", "eval", "test", "init", "prompts", "reference", "other"]
