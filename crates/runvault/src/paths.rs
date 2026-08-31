@@ -4,6 +4,8 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime};
 
+use chrono::{DateTime, FixedOffset};
+
 use crate::error::{Error, Result};
 use crate::files;
 use crate::status::RunStatus;
@@ -40,6 +42,11 @@ fn symlink(target: &Path, link: &Path) -> std::io::Result<()> {
 ///
 /// Two runs started in either order can finish in either order; without the
 /// comparison the link would walk backwards when a long run overtakes a short one.
+///
+/// The two instants are compared after parsing, not as strings. `finished_at`
+/// carries a UTC offset, so `10:00:00+09:00` sorts above `09:00:00+00:00` while
+/// happening eight hours earlier: comparing the text would move the link
+/// backwards for any pair of runs recorded under different offsets.
 pub fn update_latest_finished(
     experiment_dir: &Path,
     slug: &str,
@@ -51,8 +58,9 @@ pub fn update_latest_finished(
     let _guard = LinkMutex::acquire(experiment_dir)?;
     let link = experiment_dir.join(LATEST_FINISHED);
 
+    let at = parse_finished_at(finished_at, slug)?;
     if let Some(current) = read_link_status(&link)?
-        && current.finished_at.as_str() >= finished_at
+        && parse_finished_at(&current.finished_at, LATEST_FINISHED)? >= at
     {
         return Ok(false);
     }
@@ -67,6 +75,19 @@ pub fn update_latest_finished(
     symlink(Path::new(slug), &tmp).map_err(|e| Error::io(&tmp, e))?;
     std::fs::rename(&tmp, &link).map_err(|e| Error::io(&link, e))?;
     Ok(true)
+}
+
+/// The instant a run finished, as recorded in its `status.json`.
+///
+/// An unparseable timestamp is an error rather than an assumed ordering: which
+/// of two runs finished last is exactly what is unknown, and guessing it is how
+/// the link ends up pointing at the older one.
+fn parse_finished_at(finished_at: &str, what: &str) -> Result<DateTime<FixedOffset>> {
+    DateTime::parse_from_rfc3339(finished_at).map_err(|e| {
+        Error::spec(format!(
+            "{what}: finished_at が RFC 3339 として読めません ({finished_at}): {e}"
+        ))
+    })
 }
 
 /// A directory-wide mutex, made of a file that only one creator can win.
@@ -220,6 +241,48 @@ mod tests {
         assert_eq!(
             std::fs::read_link(exp.join(LATEST_FINISHED)).unwrap(),
             Path::new("late")
+        );
+    }
+
+    #[test]
+    fn the_offset_is_part_of_the_instant_not_decoration() {
+        // 10:00+09:00 is 01:00Z; 09:00Z is eight hours later. Sorted as text the
+        // earlier run wins and the link walks backwards in real time.
+        let dir = tempfile::tempdir().unwrap();
+        let exp = dir.path();
+        finished(&exp.join("morning-in-tokyo"), "2026-08-30T10:00:00+09:00");
+        update_latest_finished(exp, "morning-in-tokyo", "2026-08-30T10:00:00+09:00").unwrap();
+
+        finished(&exp.join("later-in-utc"), "2026-08-30T09:00:00+00:00");
+        assert!(update_latest_finished(exp, "later-in-utc", "2026-08-30T09:00:00+00:00").unwrap());
+        assert_eq!(
+            std::fs::read_link(exp.join(LATEST_FINISHED)).unwrap(),
+            Path::new("later-in-utc")
+        );
+
+        // ...and the same pair in the other direction still does not rewind.
+        finished(&exp.join("earlier-in-utc"), "2026-08-30T00:30:00+00:00");
+        assert!(
+            !update_latest_finished(exp, "earlier-in-utc", "2026-08-30T00:30:00+00:00").unwrap()
+        );
+        assert_eq!(
+            std::fs::read_link(exp.join(LATEST_FINISHED)).unwrap(),
+            Path::new("later-in-utc")
+        );
+    }
+
+    #[test]
+    fn an_unreadable_timestamp_is_refused_rather_than_ordered_by_guess() {
+        let dir = tempfile::tempdir().unwrap();
+        let exp = dir.path();
+        finished(&exp.join("a"), "2026-08-30T10:00:00+09:00");
+        assert!(update_latest_finished(exp, "a", "2026-08-30T10:00:00+09:00").unwrap());
+
+        finished(&exp.join("b"), "yesterday afternoon");
+        assert!(update_latest_finished(exp, "b", "yesterday afternoon").is_err());
+        assert_eq!(
+            std::fs::read_link(exp.join(LATEST_FINISHED)).unwrap(),
+            Path::new("a")
         );
     }
 
