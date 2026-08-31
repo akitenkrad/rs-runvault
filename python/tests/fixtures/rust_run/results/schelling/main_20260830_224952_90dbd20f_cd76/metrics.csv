@@ -1,0 +1,4 @@
+run_uid,step,step_unit,scope,name,value
+01M19EY2Q6YRSB1FHNM38PHC2T,1,step,run,segregation_index,0.412
+01M19EY2Q6YRSB1FHNM38PHC2T,120,step,run,segregation_index,0.834
+01M19EY2Q6YRSB1FHNM38PHC2T,,,run,n_units,208.0

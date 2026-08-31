@@ -37,3 +37,16 @@ jobs:
       # test pass instead of fixing the implementation.
       - run: uv run --with blake3 python tools/gen_testvectors.py
       - run: git diff --exit-code schema/v1/testvectors/
+
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      # The Pydantic models are a view of schema/v1. Committing them and
+      # regenerating here is what keeps the view from drifting away from the
+      # specification: "it can be generated" is not the same as "it matches".
+      - run: uv run --with datamodel-code-generator python tools/gen_pydantic.py
+      - run: git diff --exit-code python/src/runvault/models/
+      - run: uv run --group dev pytest -q
+        working-directory: python

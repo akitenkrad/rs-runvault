@@ -1,0 +1,89 @@
+{
+  "schema_version": "1.0",
+  "vocab_version": "1.2",
+  "runvault_version": "0.1.0",
+  "run_uid": "01M19EY2Q6YRSB1FHNM38PHC2T",
+  "run_slug": "main_20260830_224952_90dbd20f_cd76",
+  "repo_id": "runvault-fixture",
+  "experiment": "schelling",
+  "subcommand": "main",
+  "domain": "simulation",
+  "config_hash": "90dbd20fc7ada73b705def1655a4775016bce74da51846efd5a4c6f9063cd673",
+  "execution_hash": "cd76aceb7f177eebd666e4ec58c671723e0a2e29003e3bb8f270099e9aa5f95d",
+  "created_at": "2026-08-30T22:49:52.742690+09:00",
+  "cli_args": [
+    "target/debug/examples/write_fixture"
+  ],
+  "origin": "code",
+  "visibility": "internal",
+  "code": {
+    "git_remote": null,
+    "git_branch": "main",
+    "git_commit": "6a723db9b9844a5fae442d47a7c513b4944f9934",
+    "git_dirty": false,
+    "dirty_hash": null,
+    "repo_relpath": null,
+    "locks": [
+      {
+        "kind": "cargo",
+        "hash": {
+          "algorithm": "blake3",
+          "value": "163ddd17b91726bc778c524629e924189a572d8cd2790c06b25eaf03c7e74afa"
+        },
+        "file": "lock/Cargo.lock"
+      },
+      {
+        "kind": "uv",
+        "hash": {
+          "algorithm": "blake3",
+          "value": "08d2f59aa2f9799efb150777a69323522b3d977892073b60584a023c236f025f"
+        },
+        "file": "lock/uv.lock"
+      }
+    ]
+  },
+  "env": {
+    "env_hash": "b077d05097341ceb8b8d3bbd2942f38ced23ec0d59fbd2afb7caf78f7f564e9a",
+    "host": "Mac-mini-3.local",
+    "os": "macos",
+    "arch": "aarch64",
+    "rustc_version": "rustc 1.94.0 (4a4ef493e 2026-03-02)",
+    "python_version": null
+  },
+  "rng": {
+    "master_seed": 42,
+    "replicate_index": null
+  },
+  "data": [
+    {
+      "role": "init",
+      "name": "schelling-grid",
+      "dataset_id": "schelling-grid@1"
+    }
+  ],
+  "research": {
+    "is_replication": true,
+    "work": {
+      "work_id": "doi:10.1080/0022250X.1971.9989794",
+      "doi": "10.1080/0022250X.1971.9989794",
+      "arxiv_id": null,
+      "paper_id": null,
+      "title": "Dynamic Models of Segregation",
+      "year": null,
+      "source_version": "published"
+    },
+    "targets": [
+      {
+        "target_id": "tbl3-r2",
+        "kind": "table",
+        "label": "Table 3",
+        "panel": null,
+        "row": "2",
+        "condition": null
+      }
+    ],
+    "upstream_impl": null,
+    "obsidian_note": "研究/98_論文レポート/80-再現実験/P00000009/設計書.md",
+    "jira": []
+  }
+}

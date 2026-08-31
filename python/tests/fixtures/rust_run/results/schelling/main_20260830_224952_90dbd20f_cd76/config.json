@@ -1,0 +1,29 @@
+{
+  "schema_version": "1.0",
+  "run_uid": "01M19EY2Q6YRSB1FHNM38PHC2T",
+  "runvault": {
+    "hash_exclude": [
+      "/output_dir",
+      "/log_level"
+    ],
+    "seed_pointers": [
+      "/seed"
+    ],
+    "determinism": {
+      "invariant_to": [
+        "/threads"
+      ]
+    },
+    "sync_include": [],
+    "sync_exclude": []
+  },
+  "parameters": {
+    "cols": 16,
+    "log_level": "info",
+    "output_dir": "results/whatever",
+    "rows": 13,
+    "seed": 42,
+    "threads": 8,
+    "threshold": 0.5
+  }
+}

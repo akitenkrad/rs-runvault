@@ -1,0 +1,45 @@
+# runvault コア語彙. 追加・廃止はこのファイルを更新し vocab_version を上げる.
+# 実験固有の語は namespace 付き ( "x.<repo_id>.<name>" ) とし, コア語彙とは衝突させない.
+vocab_version = "1.2"
+
+[domains]
+# analysis = 決定的な解析計算 (RNG を使わない). simulation を名乗ると master_seed が必須になり,
+# 存在しない seed を書くことになるため分けている.
+values = ["simulation", "analysis", "llm-safety", "anomaly-detection", "nlp", "other"]
+
+[data_roles]
+values = ["train", "eval", "test", "init", "prompts", "reference", "other"]
+
+[scopes]
+# metrics.csv の scope 列: 値がどの粒度の集約か
+values = ["run", "sweep", "trial", "agent", "flow", "epoch_group"]
+
+[step_units]
+# metrics.csv の step_unit 列 / events.jsonl の t_unit: 時間軸の単位
+# event = 離散事象そのものを刻みとする (Axelrod のような事象駆動 ABM や Gillespie 法に
+#         「ステップ」に相当する自然な区切りが無いため).
+values = ["step", "event", "epoch", "turn", "packet", "generation", "round"]
+
+[event_schemas]
+values = ["observation", "terminal", "note"]
+
+[metric_names]
+# 予約指標名. 意味を固定する. 実行時間は status.json の duration_sec が正本なので metrics には持たせない.
+tokens_in  = { scope = ["run", "trial"], meaning = "LLM API の入力トークン数" }
+tokens_out = { scope = ["run", "trial"], meaning = "LLM API の出力トークン数" }
+cost_usd   = { scope = ["run"],          meaning = "実測 API 費用 (USD)" }
+n_units    = { scope = ["run"],          meaning = "観測主体の数" }
+
+# 廃止語は 2 種に分ける. 解決は runvault query --refresh が索引を作るときに 1 度だけ行う.
+[deprecated.renamed]
+# 旧名 = 新名. 索引では新名に書き換える (同じ列に載る).
+
+[deprecated.moved]
+# 旧名 = 移動先. 索引の metrics からは落とし, 移動先の列を使う.
+# 競合したとき (両方に値がある) は移動先を採る.
+wall_sec = "runs.duration_sec"
+
+[report]
+# runvault report --obsidian の既定値
+freshness_hours = 24
+max_runs = 200
