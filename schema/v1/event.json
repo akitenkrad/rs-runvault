@@ -26,7 +26,7 @@
       "then": { "required": ["schema", "run_uid", "ts", "unit_id", "t", "t_unit"] }
     },
     {
-      "$comment": "コア語彙 terminal: 到達時間の終端行. 生存時間解析はこの行だけで組める",
+      "$comment": "コア語彙 terminal: 到達時間の終端行. 集計としてはこの行だけで生存時間解析に掛けられるが, observation を省いてよいという意味ではない - 設計書 3.4 の通り粒度は 1 観測 1 行で, terminal は observation から再構成できることが不変条件であり, verify --deep は terminal の unit_id が observation にも現れることを要求する",
       "if": { "properties": { "schema": { "const": "terminal" } }, "required": ["schema"] },
       "then": {
         "required": ["schema", "run_uid", "ts", "unit_id", "t", "t_unit", "outcome", "censored", "budget"],
