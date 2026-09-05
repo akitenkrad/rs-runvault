@@ -4,6 +4,8 @@ use std::collections::BTreeSet;
 use std::fs::{File, OpenOptions};
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use chrono::{DateTime, Local};
 use serde::Serialize;
@@ -19,6 +21,7 @@ use crate::meta::{
     Code, Dataset, Env, Lineage, Llm, Origin, Replication, Research, RunMeta, SCHEMA_VERSION,
     Visibility,
 };
+use crate::progress::{Progress, Stage};
 use crate::status::{Counts, RunStatus, State, StatusError};
 use crate::verify;
 use crate::vocabulary;
@@ -362,6 +365,9 @@ pub struct Run {
     events: Option<BufWriter<File>>,
     counts: Counts,
     heartbeat: Option<Heartbeat>,
+    /// Cleared once the record is sealed, so a `Stage` still in flight stops
+    /// appending to a `logs/` tree `manifest.csv` has already hashed.
+    open: Arc<AtomicBool>,
     finished: bool,
 }
 
@@ -496,6 +502,7 @@ impl Run {
             events: None,
             counts: Counts::default(),
             heartbeat: Some(heartbeat),
+            open: Arc::new(AtomicBool::new(true)),
             finished: false,
         })
     }
@@ -523,6 +530,52 @@ impl Run {
     /// The sweep this run belongs to, which for a sweep parent is its own id.
     pub fn sweep_id(&self) -> Option<&str> {
         self.meta.lineage.as_ref()?.sweep_id.as_deref()
+    }
+
+    /// Opens a stage of `total` equally costly conditions, reporting on standard
+    /// error and into `logs/progress.log`.
+    ///
+    /// A subcommand that can run for more than a minute says how much work it is
+    /// about to do and then says "one more"; it never formats a line, chooses a
+    /// stream or decides when to report. See [`crate::progress`] for what a line
+    /// carries and why.
+    ///
+    /// The returned [`Stage`] borrows nothing, so metrics can still be recorded
+    /// inside the loop it reports on. Close it before [`Run::finish`]: the
+    /// manifest is written there, and a line added afterwards is a line the
+    /// manifest disagrees with — which is why a stage that outlives its run
+    /// keeps reporting to standard error, says so once, and stops writing into
+    /// the directory.
+    pub fn stage(&self, name: &str, total: usize) -> Stage {
+        self.progress().stage(name, total)
+    }
+
+    /// Opens a stage whose conditions cost different amounts.
+    ///
+    /// `costs` holds one figure per condition, in the order they will be ticked,
+    /// in any unit proportional to the time a condition takes. A stage whose
+    /// conditions span orders of magnitude cannot extrapolate from the count,
+    /// and an estimate that is confidently wrong is worse than none.
+    pub fn weighted_stage(&self, name: &str, costs: Vec<f64>) -> Stage {
+        self.progress().weighted_stage(name, costs)
+    }
+
+    /// Opens a stage whose total is not known before it runs.
+    ///
+    /// It reports on a timer and carries neither a percentage nor an estimate.
+    /// Prefer [`Run::stage`] whenever the work can be counted first.
+    pub fn unbounded_stage(&self, name: &str) -> Stage {
+        self.progress().unbounded_stage(name)
+    }
+
+    /// Where this run's progress lines go, and for how long.
+    fn progress(&self) -> Progress {
+        Progress::in_open_run(&self.dir, Arc::clone(&self.open))
+    }
+
+    /// The record is sealed: stages still in flight stop writing into the run.
+    fn close_to_progress(&self) {
+        self.open.store(false, Ordering::SeqCst);
     }
 
     /// Records a number. Call `.send()` on the returned builder.
@@ -652,6 +705,7 @@ impl Run {
             kind: kind.into(),
             message: message.into(),
         };
+        self.close_to_progress();
         self.release_lock()?;
         self.write_status(State::Failed, Some(error), None)?;
         self.finished = true;
@@ -668,6 +722,10 @@ impl Run {
 
     fn finish_inner(&mut self) -> Result<()> {
         self.flush_writers()?;
+        // Before the walk, not after it: a line appended between the walk and
+        // the digest would be a `manifest.csv` that disagrees with the file it
+        // names, and `runvault verify` would report it as tampering.
+        self.close_to_progress();
         self.write_manifest()?;
 
         // The lock goes before `status.json`: a completed run must never be found
@@ -811,6 +869,7 @@ impl Drop for Run {
         if self.finished {
             return;
         }
+        self.close_to_progress();
         let _ = self.release_lock();
         let _ = self.write_status(
             State::Failed,

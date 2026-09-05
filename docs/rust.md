@@ -72,6 +72,55 @@ written elsewhere in the run directory is not part of the record.
 directory afterwards is not in it, so a figure drawn later belongs beside the
 run rather than inside it.
 
+## Progress
+
+A subcommand that can run for more than a minute reports what it is doing.
+Nothing else in the run directory says whether a long silence is work or a wedge,
+and telling the two apart with `ps` is a diagnosis made outside the program.
+
+```rust
+let mut stage = run.stage("stage 2", conditions.len());
+for condition in &conditions {
+    let value = evaluate(condition);
+    run.log_metric("segregation_index", value).send()?;
+    stage.tick();
+}
+stage.close();
+```
+
+```
+progress: stage 2          200/4000     5%  elapsed      12s  eta    3m54s
+progress: stage 2         4000/4000   100%  elapsed    4m06s  done
+```
+
+Lines go to **standard error**, leaving standard output for the run's
+machine-readable results, and the same lines are mirrored into
+`logs/progress.log`, which `finish()` hashes into `manifest.csv`. Every line is
+flushed as it is written and `isatty` is never consulted: a run whose output is
+redirected is exactly the run whose progress is worth having. A stage reports
+every five per cent of its total and, whichever comes first, at least every
+thirty seconds.
+
+The caller says how much work there is and then says "one more"; it never formats
+a line, chooses a stream or decides when to report. A `Stage` borrows nothing, so
+the run stays free to record metrics inside the loop being reported on.
+
+Two variants cover the stages a count does not describe:
+
+| Call | For |
+| --- | --- |
+| `run.weighted_stage(name, costs)` | Conditions that cost different amounts. `costs` is one figure per condition in tick order, in any unit proportional to time; the percentage and the estimate are shares of the cost rather than of the count. A stage whose conditions span orders of magnitude reports "19s" with half an hour left if it counts. |
+| `run.unbounded_stage(name)` | Work that cannot be counted first. It reports its tally on a timer and carries neither a percentage nor an estimate, rather than inventing a denominator. |
+
+Progress is not a metric. `metrics.csv` holds the quantities the experiment is
+about; how long the run took is `status.json`'s `duration_sec`, and a second
+answer to that question in another file is a second answer that can disagree.
+
+Close a stage before `finish()`. The manifest is written there, and a line added
+afterwards is a line the manifest disagrees with — so a stage left open past the
+end of its run keeps reporting to standard error, says so once, and stops writing
+into the directory.
+
 ## Sweeps
 
 A sweep parent is driven by a list of seeds rather than one, so it is declared

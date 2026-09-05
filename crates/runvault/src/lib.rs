@@ -43,6 +43,7 @@ pub mod lockfile;
 pub mod meta;
 pub mod paths;
 pub mod pointer;
+pub mod progress;
 pub mod run;
 pub mod status;
 pub mod sync;
@@ -53,5 +54,6 @@ pub use error::{Error, Result};
 pub use meta::{
     Dataset, Lineage, Llm, Origin, Replication, Research, RunMeta, Target, Visibility, Work,
 };
+pub use progress::{Progress, Stage};
 pub use run::{Run, RunOptions};
 pub use status::{RunStatus, State};

@@ -1015,3 +1015,92 @@ fn a_terminal_line_may_not_contradict_its_own_budget() {
         assert_valid("event", line);
     }
 }
+
+/// A stage opened on the run lands in `logs/`, which is one of the two trees
+/// `finish()` walks, so the record of how long the run took survives the
+/// terminal it was started from and is hashed like every other file.
+#[test]
+fn a_stage_is_recorded_as_part_of_the_run() {
+    let results = tempfile::tempdir().unwrap();
+    let mut run = Run::start(
+        RunOptions::new("sweep", "sweep")
+            .repo_id("hand-annotation")
+            .domain("other")
+            .origin(Origin::Manual)
+            .results_root(results.path())
+            .parameters(&json!({"conditions": 40}))
+            .unwrap(),
+    )
+    .unwrap();
+    let dir = run.dir().to_path_buf();
+
+    let mut stage = run.stage("stage 2", 40);
+    for i in 0..40u32 {
+        // The stage borrows nothing, so the run it reports on is still free to
+        // record what the work produced. A progress API that made this a borrow
+        // error would be one nobody could call from the loop that needs it.
+        run.log_metric("cells", f64::from(i))
+            .step(u64::from(i), "step")
+            .send()
+            .unwrap();
+        stage.tick();
+    }
+    stage.close();
+
+    run.finish().unwrap();
+
+    let log = std::fs::read_to_string(dir.join(runvault::progress::LOG_PATH)).unwrap();
+    assert!(log.lines().count() > 1, "{log}");
+
+    for row in csv_rows(&dir.join("manifest.csv"), &[], &["bytes"]) {
+        assert_valid("manifest.row", &row);
+    }
+    let manifest = std::fs::read_to_string(dir.join("manifest.csv")).unwrap();
+    assert!(
+        manifest.contains(runvault::progress::LOG_PATH),
+        "{manifest}"
+    );
+
+    // Progress is not a metric: only what the experiment measured is in
+    // `metrics.csv`, and how long it took stays `status.json`'s answer alone.
+    let metrics = std::fs::read_to_string(dir.join("metrics.csv")).unwrap();
+    assert!(!metrics.contains("progress"), "{metrics}");
+    assert!(!metrics.contains("elapsed"), "{metrics}");
+
+    runvault::verify::deep(&dir).unwrap();
+}
+
+/// `finish()` seals the manifest, so a stage that outlives it must not go on
+/// appending to a file the manifest has already hashed. Reporting continues on
+/// standard error; the run's copy stops.
+#[test]
+fn a_stage_left_open_past_the_end_does_not_break_the_record() {
+    let results = tempfile::tempdir().unwrap();
+    let run = Run::start(
+        RunOptions::new("sweep", "sweep")
+            .repo_id("hand-annotation")
+            .domain("other")
+            .origin(Origin::Manual)
+            .results_root(results.path())
+            .parameters(&json!({"conditions": 100}))
+            .unwrap(),
+    )
+    .unwrap();
+    let dir = run.dir().to_path_buf();
+
+    let mut stage = run.stage("stage 2", 100);
+    stage.tick();
+    run.finish().unwrap();
+
+    let sealed = std::fs::read_to_string(dir.join(runvault::progress::LOG_PATH)).unwrap();
+    for _ in 0..99 {
+        stage.tick();
+    }
+    stage.close();
+
+    assert_eq!(
+        std::fs::read_to_string(dir.join(runvault::progress::LOG_PATH)).unwrap(),
+        sealed
+    );
+    runvault::verify::deep(&dir).unwrap();
+}

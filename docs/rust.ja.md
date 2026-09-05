@@ -66,6 +66,40 @@ run.finish()?;
 
 `manifest.csv` は `finish()` によって一度だけ書かれる．その後に run ディレクトリへ足したものは manifest に入らないので，後から描いた図は run の中ではなく隣に置くべきである．
 
+## 進捗
+
+1 分を超えて走りうるサブコマンドは，自分が何をしているかを報告する．長い沈黙が仕事なのか停止なのかは run ディレクトリの他のどこにも書かれておらず，`ps` で見分けるのはプログラムの外で下す診断である．
+
+```rust
+let mut stage = run.stage("stage 2", conditions.len());
+for condition in &conditions {
+    let value = evaluate(condition);
+    run.log_metric("segregation_index", value).send()?;
+    stage.tick();
+}
+stage.close();
+```
+
+```
+progress: stage 2          200/4000     5%  elapsed      12s  eta    3m54s
+progress: stage 2         4000/4000   100%  elapsed    4m06s  done
+```
+
+行は **標準エラー** へ出る．標準出力は run の機械可読な結果のために空けてある．同じ行が `logs/progress.log` にも残り，`finish()` がそれを `manifest.csv` にハッシュする．行ごとに flush し，`isatty` は決して見ない —— 出力がリダイレクトされている run こそ，進捗が要る run である．刻みは総数の 5% ごと，かつ遅くとも 30 秒ごとで，早く来た方が採用される．
+
+呼び出し側は「どれだけ仕事があるか」と「1 件終わった」だけを言う．行を組み立てず，ストリームを選ばず，いつ報告するかも決めない．`Stage` は何も借用しないので，報告している当のループの中で run が指標を記録できる．
+
+数え上げでは表せない段には 2 つの変種がある：
+
+| 呼び出し | 用途 |
+| --- | --- |
+| `run.weighted_stage(name, costs)` | 条件ごとにコストが違う段．`costs` は tick 順に 1 条件 1 個，時間に比例する任意の単位で与える．割合と見積りは件数ではなくコストの取り分になる．コストが桁で違う段を件数で数えると，残り 30 分の地点で「19s」と言い切る． |
+| `run.unbounded_stage(name)` | 先に数えられない仕事．分母を捏造せず，到達した件数を一定時間ごとに報告し，割合も見積りも持たない． |
+
+進捗は指標ではない．`metrics.csv` が持つのは実験が測ろうとしている量であり，run にかかった時間は `status.json` の `duration_sec` である．同じ問いへの 2 つ目の答えは，食い違いうる 2 つ目の答えである．
+
+段は `finish()` より前に閉じる．manifest はそこで書かれるので，その後に足した行は manifest が食い違う行になる —— run の終わりを越えて開いたままの段は，標準エラーへは報告を続け，そのことを 1 度だけ言い，ディレクトリへの書き込みだけをやめる．
+
 ## sweep
 
 sweep の親は 1 つの seed ではなく seed の列で駆動されるので，`RunOptions::sweep_parent()` で宣言し（これが `lineage.sweep_id` を run 自身の slug で埋める），`master_seed` は設定しない．子はそれぞれ自分の seed を持つ．

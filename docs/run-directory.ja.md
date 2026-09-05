@@ -70,6 +70,8 @@ run が書いた全ファイルについて `run_uid, path, algorithm, digest, b
 
 生成物とログの置き場所．`finish()` が歩く 2 本であり，`runvault sync` が意図的に置いていく 2 本でもある —— `manifest.csv` が既にその同一性を持っているからである．
 
+`logs/progress.log` は `run.stage(...)` が書く．標準エラーへ出したものと同じ行をここに残すので，サブコマンドがどれだけかかり，途中でどこにいたかが，起動したターミナルより長く残る．
+
 ## 生存期間と失敗
 
 - 実行中の run は `.runvault.lock` を持ち，heartbeat で更新される．

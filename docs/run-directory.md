@@ -100,6 +100,10 @@ Where generated files and logs go. These are the two trees `finish()` walks, and
 the two `runvault sync` deliberately leaves behind — `manifest.csv` already
 carries their identity.
 
+`logs/progress.log` is written by `run.stage(...)`, which mirrors there whatever
+it prints to standard error, so how long a subcommand took and where it was at
+any point outlives the terminal it was started from.
+
 ## Lifetime and failure
 
 - A run in progress holds `.runvault.lock`, refreshed by a heartbeat.
