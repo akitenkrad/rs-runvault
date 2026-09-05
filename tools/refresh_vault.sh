@@ -79,6 +79,22 @@ for root in "${SEARCH_ROOTS[@]}"; do
     [[ -d "$results" ]] || continue
     repo_id="$(basename "$(dirname "$results")")"
 
+    # Reap first, sync second. A run whose process was killed leaves a lock and
+    # no status.json, and left alone it reads as "still running" forever -- so
+    # syncing it would copy that non-answer into the index. `gc` turns it into a
+    # recorded failure, which is the true statement about it.
+    #
+    # `gc` refuses to reap a lock whose heartbeat is under five minutes old, so
+    # that it cannot kill a run that merely started. That grace period is why
+    # this belongs in a daily job and not in the hands of whoever remembers:
+    # by the time this runs, anything killed during the day is long past it.
+    #
+    # Its failure is not fatal. A repository that cannot be reaped can still be
+    # synced, and saying so is better than skipping the copy.
+    if ! "$RUNVAULT" gc --results-root "$results" >/dev/null 2>&1; then
+      log "WARNING: gc failed for $repo_id (continuing to sync)"
+    fi
+
     # One repository failing must not take the others down with it. That is the
     # whole point of collecting failures instead of `set -e`.
     #
