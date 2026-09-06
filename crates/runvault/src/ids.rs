@@ -38,6 +38,27 @@ pub fn new_run_uid(now: DateTime<Local>) -> String {
     Ulid::from_datetime(now.into()).to_string()
 }
 
+/// Whether the value is a `run_uid` — the ULID grammar of `schema/v1/common.json`.
+///
+/// Crockford base32 without `I`, `L`, `O` and `U`, and a first character in
+/// `0-7` so that the 48-bit time part fits in 26 characters. `verify` asks this
+/// of a `status.json` read back from disk, where nothing guarantees the file
+/// was written by `new_run_uid`.
+pub fn is_run_uid(value: &str) -> bool {
+    let mut chars = value.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    if !('0'..='7').contains(&first) {
+        return false;
+    }
+    let rest: Vec<char> = chars.collect();
+    rest.len() == 25
+        && rest.iter().all(|c| {
+            c.is_ascii_digit() || (c.is_ascii_uppercase() && !matches!(c, 'I' | 'L' | 'O' | 'U'))
+        })
+}
+
 /// The timestamp part of `run_slug`, in local time.
 pub fn timestamp_part(now: DateTime<Local>) -> String {
     now.format("%Y%m%d_%H%M%S").to_string()
@@ -109,6 +130,24 @@ mod tests {
         let uid = new_run_uid(Local::now());
         assert_eq!(uid.len(), 26);
         assert!(('0'..='7').contains(&uid.chars().next().unwrap()), "{uid}");
+    }
+
+    #[test]
+    fn the_uid_grammar_accepts_what_new_run_uid_makes_and_little_else() {
+        assert!(is_run_uid(&new_run_uid(Local::now())));
+        assert!(is_run_uid("01K3QZ8F7H9M2N4P6R8T0V2X4Z"));
+        assert!(!is_run_uid(""));
+        assert!(
+            !is_run_uid("81K3QZ8F7H9M2N4P6R8T0V2X4Z"),
+            "first char above 7"
+        );
+        assert!(!is_run_uid("01K3QZ8F7H9M2N4P6R8T0V2X4"), "25 characters");
+        assert!(!is_run_uid("01K3QZ8F7H9M2N4P6R8T0V2X4ZZ"), "27 characters");
+        assert!(
+            !is_run_uid("01K3QZ8F7H9M2N4P6R8T0V2X4I"),
+            "I is not in the alphabet"
+        );
+        assert!(!is_run_uid("01k3qz8f7h9m2n4p6r8t0v2x4z"), "lower case");
     }
 
     #[test]

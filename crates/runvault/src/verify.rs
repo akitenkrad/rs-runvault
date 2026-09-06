@@ -5,6 +5,13 @@
 //! (design note §3.10). The shallow checks are cheap enough to run at the end of
 //! every execution; rehashing the data and walking `events.jsonl` are not, and
 //! belong before a sync or before a table is built.
+//!
+//! One thing here is *not* a cross-file invariant. A schema runs when a file is
+//! written, and nothing runs it again afterwards, so a `status.json` edited or
+//! truncated later kept passing `verify` on the strength of Serde alone
+//! (MYTASK-3203). `check_status_schema` re-asks that one file the value-level
+//! constraints its schema carries. It is a deliberate exception, not a new
+//! rule: `status.json` is the file whose contents steer the other checks.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::io::BufRead;
@@ -15,7 +22,7 @@ use crate::error::{Error, Result};
 use crate::files;
 use crate::hash;
 use crate::ids;
-use crate::meta::{Algorithm, Lineage, Research, RunMeta};
+use crate::meta::{Algorithm, Lineage, Research, RunMeta, SCHEMA_VERSION};
 use crate::status::{RunStatus, State};
 
 /// Runs every shallow invariant against a run directory.
@@ -95,16 +102,103 @@ fn check_status(run_dir: &Path, uid: &str) -> Result<()> {
             status.run_uid
         )));
     }
-    if status.state == State::Failed && status.error.is_none() {
-        return Err(Error::verify(
-            "state=failed なのに error がありません".to_string(),
-        ));
-    }
+    check_status_schema(&status)?;
     if run_dir.join(crate::lockfile::LOCK_FILE).is_file() {
         return Err(Error::verify(
             "status.json があるのに .runvault.lock が残っています (完了した run が実行中に見えます)"
                 .to_string(),
         ));
+    }
+    Ok(())
+}
+
+/// The value-level constraints of `schema/v1/status.json`.
+///
+/// Serde has already covered the shape by the time this runs: `RunStatus` is
+/// `deny_unknown_fields` with typed fields, so a missing key, a wrong type and
+/// an unknown key are all refused by `files::read_json`. What a type cannot say
+/// is `const`, `format`, `minimum`, `minLength` and a condition on another
+/// field — and until MYTASK-3203 nothing asked those of a file read back from
+/// disk. The schema only ran at write time, in the tests, so a `status.json`
+/// edited or truncated afterwards passed `verify` unexamined.
+///
+/// The schema is the specification and this mirrors it. `tests/status_constraints.rs`
+/// pins the whole inventory of constraints the schema carries, so a constraint
+/// added there and not added here fails a test rather than going quiet.
+fn check_status_schema(status: &RunStatus) -> Result<()> {
+    // `/allOf/0`: a failure has to say why.
+    if status.state == State::Failed && status.error.is_none() {
+        return Err(Error::verify(
+            "state=failed なのに error がありません".to_string(),
+        ));
+    }
+    // `/allOf/1`: a success carries no error, and no exit code but 0 or none.
+    if status.state == State::Finished {
+        if status.error.is_some() {
+            return Err(Error::verify(
+                "status.json: state=finished なのに error があります".to_string(),
+            ));
+        }
+        if let Some(code) = status.exit_code
+            && code != 0
+        {
+            return Err(Error::verify(format!(
+                "status.json: state=finished なのに exit_code が `{code}` です ( 0 か null のみ)"
+            )));
+        }
+    }
+    // `/properties/schema_version`: a `const`.
+    if status.schema_version != SCHEMA_VERSION {
+        return Err(Error::verify(format!(
+            "status.json: schema_version は \"{SCHEMA_VERSION}\" である必要があります ( 実際は \"{}\")",
+            status.schema_version
+        )));
+    }
+    // `/properties/run_uid`: the ULID grammar. The caller has already required
+    // this to equal `run.json`'s, so asking it here refuses both spellings at once.
+    if !ids::is_run_uid(&status.run_uid) {
+        return Err(Error::verify(format!(
+            "status.json: run_uid `{}` が ULID の形をしていません",
+            status.run_uid
+        )));
+    }
+    // `/properties/started_at`, `/properties/finished_at`: `format: date-time`.
+    for (field, value) in [
+        ("started_at", &status.started_at),
+        ("finished_at", &status.finished_at),
+    ] {
+        if chrono::DateTime::parse_from_rfc3339(value).is_err() {
+            return Err(Error::verify(format!(
+                "status.json: {field} `{value}` が RFC 3339 の日時ではありません"
+            )));
+        }
+    }
+    // `/properties/duration_sec`: `minimum: 0`. It is a difference of two wall
+    // clock readings, so a clock stepped backwards mid-run writes a negative one
+    // through the ordinary writer — this is not only a hand-editing check.
+    if status.duration_sec < 0.0 {
+        return Err(Error::verify(format!(
+            "status.json: duration_sec が負です ( {} )",
+            status.duration_sec
+        )));
+    }
+    // `/properties/collision_index`: `minimum: 2`. The first run takes no suffix.
+    if let Some(index) = status.collision_index
+        && index < 2
+    {
+        return Err(Error::verify(format!(
+            "status.json: collision_index が `{index}` です ( 2 以上のみ)"
+        )));
+    }
+    // `/properties/error/properties/{kind,message}`: `minLength: 1`.
+    if let Some(error) = &status.error {
+        for (field, value) in [("kind", &error.kind), ("message", &error.message)] {
+            if value.is_empty() {
+                return Err(Error::verify(format!(
+                    "status.json: error.{field} が空です"
+                )));
+            }
+        }
     }
     Ok(())
 }
