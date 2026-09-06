@@ -128,7 +128,7 @@ pub fn build(vault_root: &Path) -> Result<Value, String> {
     let warnings = warnings(&connection, &runs_table)?;
 
     Ok(json!({
-        "schema_version": "1.0",
+        "schema_version": "1.1",
         "vocab_version": vocabulary.version,
         "generated_at": chrono::Local::now().to_rfc3339(),
         "freshness_hours": vocabulary.freshness_hours,

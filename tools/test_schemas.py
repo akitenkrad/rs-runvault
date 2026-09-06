@@ -75,7 +75,7 @@ CONFIG = {"schema_version": "1.0", "run_uid": UID,
           "runvault": {"hash_exclude": ["/output_dir"], "seed_pointers": ["/seed"]},
           "parameters": {"seed": 1}}
 REPORT = {
-    "schema_version": "1.0", "vocab_version": "1.0", "generated_at": TS, "freshness_hours": 24,
+    "schema_version": "1.1", "vocab_version": "1.0", "generated_at": TS, "freshness_hours": 24,
     "experiments": [{"experiment": "p00000009-schelling", "repo_id": "ssr", "n_runs": 3,
                      "n_finished": 3, "last_run_at": TS, "primary_metrics": ["segregation_index"],
                      "jira": ["MYTASK-1880"],

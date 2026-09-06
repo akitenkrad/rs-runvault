@@ -191,7 +191,7 @@ fn the_payload_matches_the_contract_the_dashboard_reads() {
     let report = payload(results.path(), vault.path());
 
     assert_valid(&report);
-    assert_eq!(report["schema_version"], json!("1.0"));
+    assert_eq!(report["schema_version"], json!("1.1"));
     assert!(report["vocab_version"].as_str().is_some());
     assert_eq!(report["freshness_hours"], json!(24.0));
 }
