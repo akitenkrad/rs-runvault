@@ -115,7 +115,7 @@ pub fn build(vault_root: &Path) -> Result<Value, String> {
     let targets_table = table(vault_root, "run_targets");
     let jira_table = table(vault_root, "run_jira");
 
-    let experiments = experiments(&connection, &runs_table, &metrics_table)?;
+    let experiments = experiments(&connection, &runs_table, &metrics_table, &jira_table)?;
     let runs = runs(
         &connection,
         &runs_table,
@@ -146,6 +146,7 @@ fn experiments(
     connection: &Connection,
     runs_table: &str,
     metrics_table: &str,
+    jira_table: &str,
 ) -> Result<Vec<Value>, String> {
     // `experiment` is grouped as it is, `NULL` included: a legacy run written
     // straight into `results/` never recorded which experiment it belonged to,
@@ -165,6 +166,7 @@ fn experiments(
             "n_finished": integer(&row[3]).unwrap_or(0),
             "last_run_at": moment(&row[4]),
             "primary_metrics": Value::Array(Vec::new()),
+            "jira": Value::Array(Vec::new()),
             "cost_usd": Value::Null,
             "git_remote": Value::Null,
         }));
@@ -197,6 +199,32 @@ fn experiments(
         if let Some(value) = number(&row[2]) {
             cost.insert((text(&row[0]).unwrap_or_default(), text(&row[1])), value);
         }
+        Ok(())
+    })?;
+
+    // The issue keys of the whole experiment, not of the runs that fit in the
+    // report. `runs[]` is capped at `max_runs`, so a dashboard that groups by
+    // research theme from `runs[]` alone loses every experiment whose runs fall
+    // outside the newest N — not as a smaller count, but as a repository that
+    // is simply absent, which reads as "nothing was ever run here". Carrying
+    // the keys here lets the grouping be built from the full set.
+    //
+    // Keys are collected across every run of the experiment: a run written
+    // before the key was set has none, and one run carrying it is enough to say
+    // which issue the experiment belongs to.
+    let sql = format!(
+        "SELECT r.repo_id, r.experiment, j.issue_key
+         FROM {runs_table} AS r JOIN {jira_table} AS j USING (run_key)
+         GROUP BY 1, 2, 3 ORDER BY 1, 2, 3"
+    );
+    let mut jira: BTreeMap<(String, Option<String>), Vec<String>> = BTreeMap::new();
+    each_row(connection, &sql, |row| {
+        let Some(issue) = text(&row[2]) else {
+            return Ok(());
+        };
+        jira.entry((text(&row[0]).unwrap_or_default(), text(&row[1])))
+            .or_default()
+            .push(issue);
         Ok(())
     })?;
 
@@ -234,6 +262,9 @@ fn experiments(
         );
         if let Some(names) = primary.get(&key) {
             experiment["primary_metrics"] = json!(names);
+        }
+        if let Some(keys) = jira.get(&key) {
+            experiment["jira"] = json!(keys);
         }
         if let Some(value) = cost.get(&key) {
             experiment["cost_usd"] = json!(value);
@@ -327,18 +358,49 @@ fn runs(
         Ok(())
     })?;
 
-    let sql = format!("SELECT run_key, label FROM {targets_table} WHERE run_key IN ({wanted})");
+    // The label alone does not identify a target. A figure with four rows is
+    // four targets that all carry `Figure 8`, so selecting the label turned
+    // them into four identical strings on screen — four distinct rows read as
+    // one row recorded four times. Carry whatever tells them apart, and name
+    // the field so a bare `2` stays readable. `target_id` orders them, since
+    // the query is otherwise free to return them in any order.
+    //
+    // `condition` is the last resort: see the fallback below.
+    let sql = format!(
+        "SELECT run_key, label, panel, \"row\", condition FROM {targets_table}
+         WHERE run_key IN ({wanted}) ORDER BY run_key, target_id"
+    );
     each_row(connection, &sql, |row| {
         let (Some(key), Some(label)) = (text(&row[0]), text(&row[1])) else {
             return Ok(());
         };
+        let mut display = label;
+        let panel = text(&row[2]).filter(|v| !v.is_empty());
+        let in_table = text(&row[3]).filter(|v| !v.is_empty());
+        if let Some(panel) = &panel {
+            display.push_str(&format!(" panel {panel}"));
+        }
+        if let Some(in_table) = &in_table {
+            display.push_str(&format!(" row {in_table}"));
+        }
+        // A claim carries neither a panel nor a row: four claims can all be
+        // labelled `section 2.2`, and only the condition says which is which.
+        // Fall back to it rather than let them read as one claim recorded four
+        // times. Where a panel or a row already tells them apart, the condition
+        // is prose that belongs in the design note, so it is left out.
+        if panel.is_none()
+            && in_table.is_none()
+            && let Some(condition) = text(&row[4]).filter(|v| !v.is_empty())
+        {
+            display.push_str(&format!(" — {condition}"));
+        }
         if let Some(&i) = at.get(&key)
             && let Some(targets) = runs[i]
                 .get_mut("replication")
                 .and_then(|r| r.get_mut("targets"))
                 .and_then(Value::as_array_mut)
         {
-            targets.push(json!(label));
+            targets.push(json!(display));
         }
         Ok(())
     })?;

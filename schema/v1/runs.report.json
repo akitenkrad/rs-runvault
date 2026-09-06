@@ -42,7 +42,8 @@
           "n_runs",
           "n_finished",
           "last_run_at",
-          "primary_metrics"
+          "primary_metrics",
+          "jira"
         ],
         "properties": {
           "experiment": {
@@ -98,6 +99,14 @@
               "$ref": "common.json#/$defs/slug"
             },
             "description": "一覧に出す指標名. 実験ごとに決まる (§5.4)"
+          },
+          "jira": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^MYTASK-[0-9]+$"
+            },
+            "description": "その実験の run が参照する課題キー (重複なし). runs[] は max_runs で打ち切られるため, 研究テーマ別の束ねはこちらから組む — 打ち切りの外にある実験がテーマから丸ごと消えるのを防ぐ"
           }
         }
       }

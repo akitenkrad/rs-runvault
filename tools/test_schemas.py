@@ -78,6 +78,7 @@ REPORT = {
     "schema_version": "1.0", "vocab_version": "1.0", "generated_at": TS, "freshness_hours": 24,
     "experiments": [{"experiment": "p00000009-schelling", "repo_id": "ssr", "n_runs": 3,
                      "n_finished": 3, "last_run_at": TS, "primary_metrics": ["segregation_index"],
+                     "jira": ["MYTASK-1880"],
                      "git_remote": "git@github.com:akitenkrad/schelling1971.git"}],
     "runs": [{"run_key": UID, "run_uid": UID, "run_slug": SLUG, "repo_id": "ssr",
               "experiment": "p00000009-schelling",

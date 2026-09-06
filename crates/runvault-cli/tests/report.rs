@@ -81,7 +81,27 @@ fn replication_run(results: &Path, seed: u64, dirty_metric: f64) -> PathBuf {
                 Work::doi("10.1080/0022250X.1971.9989794")
                     .title("Dynamic Models of Segregation")
                     .source_version("published")
-                    .target(Target::table("tbl3-r2", "Table 3").row("2"))
+                    .target(
+                        Target::table("tbl3-r2", "Table 3")
+                            .row("2")
+                            .condition("30% preference, 2000 agents"),
+                    )
+                    // Two targets of the same figure. The label is the same for
+                    // both, so a report that carries only the label shows them
+                    // as one target recorded twice.
+                    .target(Target::figure("fig1-a", "Figure 1").panel("a"))
+                    .target(Target::figure("fig1-b", "Figure 1").panel("b"))
+                    // Two claims of the same section. Neither has a panel or a
+                    // row, so the condition is the only thing that tells them
+                    // apart.
+                    .target(
+                        Target::claim("say-1", "section 2.2")
+                            .condition("segregation is not intended"),
+                    )
+                    .target(
+                        Target::claim("say-2", "section 2.2")
+                            .condition("a mild preference suffices"),
+                    )
                     .obsidian_note("研究/98_論文レポート/80-再現実験/P00000009/設計書.md")
                     .jira("MYTASK-3058"),
             ),
@@ -227,6 +247,29 @@ fn the_headline_metrics_are_results_rather_than_bookkeeping() {
     // origin は run.json にしか無い．`Origin::Manual` の run は code を持たないので
     // ここでは null になり，**埋められない**ことがそのまま出る．
     assert_eq!(experiments[0]["git_remote"], Value::Null);
+
+    // The experiment carries the issue key of its runs. `runs[]` is capped, so
+    // a dashboard grouping by research theme from `runs[]` alone loses whole
+    // repositories once their runs fall outside the newest N — they read as
+    // "nothing was ever run here" rather than as a smaller count.
+    assert_eq!(experiments[0]["jira"], json!(["MYTASK-3058"]));
+}
+
+/// An experiment whose runs never recorded an issue key.
+///
+/// The empty array is the answer: no key was written. Filling it from the
+/// repository name or from a sibling experiment would invent the one thing the
+/// grouping trusts.
+#[test]
+fn an_experiment_without_an_issue_key_says_so_with_an_empty_list() {
+    let results = tempfile::tempdir().unwrap();
+    let vault = private_vault();
+    legacy_run_at_the_root(results.path(), "20240101_000000");
+    let report = payload(results.path(), vault.path());
+    assert_valid(&report);
+
+    let experiments = report["experiments"].as_array().unwrap();
+    assert_eq!(experiments[0]["jira"], json!([]));
 }
 
 #[test]
@@ -242,7 +285,19 @@ fn a_replication_carries_its_paper_and_the_gap_from_the_reported_value() {
         run["replication"]["title"],
         json!("Dynamic Models of Segregation")
     );
-    assert_eq!(run["replication"]["targets"], json!(["Table 3"]));
+    // Targets that share a label stay apart, and the field name keeps a bare
+    // `2` readable. Ordered by `target_id`, so the report does not shuffle.
+    assert_eq!(
+        run["replication"]["targets"],
+        json!([
+            "Figure 1 panel a",
+            "Figure 1 panel b",
+            "section 2.2 — segregation is not intended",
+            "section 2.2 — a mild preference suffices",
+            // The row already tells this one apart, so its condition stays out.
+            "Table 3 row 2"
+        ])
+    );
     assert_eq!(run["jira"], json!(["MYTASK-3058"]));
     // 画面はこれを使って集約先の run ディレクトリを引き，条件とハッシュを出す．
     assert_eq!(run["repo_id"], json!(REPO_ID));
