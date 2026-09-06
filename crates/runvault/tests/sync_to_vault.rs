@@ -111,6 +111,31 @@ fn finished_run(results: &Path, visibility: Visibility) -> PathBuf {
     dir
 }
 
+/// A run whose process was killed and which `runvault gc` then recorded as a
+/// failure: artifacts on disk, and no `manifest.csv`, because `finish()` never
+/// ran to write one.
+fn killed_run(results: &Path) -> PathBuf {
+    let run = Run::start(
+        RunOptions::new("schelling", "main")
+            .repo_id(REPO_ID)
+            .domain("simulation")
+            .origin(Origin::Manual)
+            .visibility(Visibility::Public)
+            .results_root(results)
+            .parameters(&json!({"rows": 13, "seed": 42}))
+            .unwrap()
+            .seed_pointers(["/seed"])
+            .master_seed(42),
+    )
+    .unwrap();
+    let dir = run.dir().to_path_buf();
+    std::fs::create_dir_all(dir.join("artifacts")).unwrap();
+    std::fs::write(dir.join("artifacts/grid.csv"), vec![0u8; 512]).unwrap();
+    run.fail("killed", "pid 16007 が status.json を書かずに終了しました")
+        .unwrap();
+    dir
+}
+
 fn plan_one(results: &Path, run: &Path, vault: &Path, allow_internal: bool) -> Planned {
     sync::plan_canonical(run, REPO_ID, vault, &options(allow_internal))
         .unwrap_or_else(|e| panic!("{}: {e}", results.display()))
@@ -695,3 +720,39 @@ fn one_scan_finds_both_kinds_and_counts_each_once() {
 }
 
 // --- the command -------------------------------------------------------------
+
+#[test]
+fn a_killed_run_travels_as_the_failure_it_is() {
+    let results = tempfile::tempdir().unwrap();
+    let vault = private_vault();
+    let run = killed_run(results.path());
+
+    // The record of a failure is still a record, and it is the only copy: the
+    // source `results/` is gitignored. Holding it back over an artifact that
+    // `sync` was never going to send stopped an entire repository from being
+    // preserved, once a day, until a person deleted the run (MYTASK-3202).
+    let plan = sent(plan_one(results.path(), &run, vault.path(), false));
+    let names: Vec<&str> = plan.files.iter().map(|f| f.path.as_str()).collect();
+    assert!(names.contains(&"status.json"), "{names:?}");
+    assert!(
+        !names.iter().any(|n| n.starts_with("artifacts/")),
+        "the heavy half stays where it is: {names:?}"
+    );
+}
+
+#[test]
+fn a_result_carrying_an_unrecorded_artifact_is_still_held_back() {
+    let results = tempfile::tempdir().unwrap();
+    let vault = private_vault();
+    let run = finished_run(results.path(), Visibility::Public);
+
+    // The other half of the same decision. A run that sealed and claims to be a
+    // result answers for everything under `artifacts/`, and a file that is not
+    // in its manifest appeared after the run ended.
+    std::fs::write(run.join("artifacts/uninvited.csv"), "1\n").unwrap();
+
+    match plan_one(results.path(), &run, vault.path(), false) {
+        Planned::Skipped { reason, .. } => assert!(reason.contains("manifest.csv"), "{reason}"),
+        Planned::Send(_) => panic!("記録に無い生成物を抱えた result が送られました"),
+    }
+}

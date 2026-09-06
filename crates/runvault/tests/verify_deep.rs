@@ -82,6 +82,39 @@ fn finished_run() -> (tempfile::TempDir, tempfile::TempDir, PathBuf) {
     (repo, results, dir)
 }
 
+/// A run that ended without `finish()`: an artifact and a log on disk, no
+/// `manifest.csv`, and a `status.json` that records why it stopped.
+///
+/// This is the shape `runvault gc` leaves behind after it reaps a killed run.
+/// It is reached here through `fail()`, which tears down in the same order and
+/// writes no manifest either, so the test does not have to outrace a heartbeat.
+fn unsealed_run(kind: &str) -> (tempfile::TempDir, tempfile::TempDir, PathBuf) {
+    let repo = git_repo();
+    let results = tempfile::tempdir().unwrap();
+    let run = Run::start(
+        RunOptions::new("schelling", "main")
+            .repo_id("social-simulation-replications")
+            .domain("simulation")
+            .results_root(results.path())
+            .repo_root(repo.path())
+            .parameters(&json!({"rows": 13, "cols": 16, "seed": 42}))
+            .unwrap()
+            .seed_pointers(["/seed"])
+            .master_seed(42),
+    )
+    .unwrap();
+    let dir = run.dir().to_path_buf();
+
+    std::fs::create_dir_all(dir.join("artifacts")).unwrap();
+    std::fs::write(dir.join("artifacts/grid.csv"), "t,value\n0,0.31\n").unwrap();
+    std::fs::create_dir_all(dir.join("logs")).unwrap();
+    std::fs::write(dir.join("logs/progress.log"), "step 1\n").unwrap();
+
+    run.fail(kind, "the process stopped before it could seal the run")
+        .unwrap();
+    (repo, results, dir)
+}
+
 fn read_json(path: &Path) -> Value {
     serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
 }
@@ -345,4 +378,56 @@ fn a_digest_whose_function_cannot_be_named_is_not_agreement() {
     restate_manifest_digest(&dir, "md5", &"0".repeat(32));
 
     only_deep_catches_it(&dir, "照合できません");
+}
+
+// --- the manifest against a run that never sealed -----------------------------
+
+#[test]
+fn a_run_killed_before_it_sealed_is_not_asked_for_the_manifest_it_never_wrote() {
+    let (_repo, _results, dir) = unsealed_run("killed");
+
+    // `finish()` writes `manifest.csv`, so a killed run has none, and the files
+    // it had already produced can never be listed in one. Refusing it here
+    // refuses it forever: `runvault sync` would never carry the record of the
+    // failure anywhere, and the run would sit in `results/` failing the daily
+    // job until a person deleted the one thing that says it happened.
+    runvault::verify::shallow(&dir).unwrap();
+    runvault::verify::deep(&dir).unwrap();
+}
+
+#[test]
+fn a_run_dropped_before_it_sealed_is_treated_the_same_way() {
+    // Nothing about the exemption is specific to `gc`: what makes the invariant
+    // unaskable is the missing seal, not which writer recorded the failure.
+    let (_repo, _results, dir) = unsealed_run("dropped");
+    runvault::verify::deep(&dir).unwrap();
+}
+
+#[test]
+fn a_failed_run_that_did_seal_still_answers_for_a_file_that_appeared_later() {
+    let (_repo, _results, dir) = finished_run();
+
+    // Sealed first, recorded as failed second, and only then a new file beside
+    // a manifest that does not name it. The exemption is the absent manifest,
+    // never the verdict — otherwise editing `state` to `failed` would be enough
+    // to walk any unrecorded artifact past the check.
+    let mut status = read_json(&dir.join("status.json"));
+    status["state"] = json!("failed");
+    status["error"] = json!({"kind": "killed", "message": "not how this works"});
+    write_json(&dir.join("status.json"), &status);
+    std::fs::write(dir.join("artifacts/uninvited.csv"), "1\n").unwrap();
+
+    only_deep_catches_it(&dir, "manifest.csv にありません");
+}
+
+#[test]
+fn a_run_that_has_not_ended_at_all_still_answers_for_its_artifacts() {
+    let (_repo, _results, dir) = finished_run();
+
+    // No manifest and no status either: this is a run still in flight. Nothing
+    // has said it failed, so nothing has excused it from the invariant.
+    std::fs::remove_file(dir.join("manifest.csv")).unwrap();
+    std::fs::remove_file(dir.join("status.json")).unwrap();
+
+    only_deep_catches_it(&dir, "manifest.csv にありません");
 }

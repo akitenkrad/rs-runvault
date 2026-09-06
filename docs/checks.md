@@ -42,7 +42,13 @@ checked from here, which is different from being wrong.
   rather than the recorded one — they have just been proved equal, and using the
   recomputed value keeps the chain honest.
 - **Rehashes `artifacts/`**, which is what stops a generated file from living
-  outside the record.
+  outside the record. The half of that check which asks whether anything on disk
+  is *missing* from `manifest.csv` presupposes a manifest, and only `finish()`
+  writes one — so a run recorded as **failed with no manifest** is exempt from
+  it. Such a run was killed, dropped, or failed at start; what it left under
+  `artifacts/` is the debris of an interrupted write, and there is no later step
+  that could ever list it. A run that sealed answers for its artifacts either
+  way, `finished` or `failed`.
 - **Walks `events.jsonl`** in full.
 
 The cost scales with the size of the run, which is why this is not what every

@@ -116,8 +116,17 @@ for root in "${SEARCH_ROOTS[@]}"; do
       fi
       synced=$((synced + 1))
     else
+      # Say WHY, not just that. `tail -5` was here and it was useless: the last
+      # lines of sync's output are the per-file listing of the runs that DID
+      # copy, plus the summary. The reason sits on the `skip` lines far above
+      # it, so the log recorded a failure with no cause and the only way to
+      # learn one was to re-run sync by hand (MYTASK-3202).
       log "FAILED to sync $repo_id"
-      printf '%s\n' "$out" | tail -5
+      reasons="$(printf '%s\n' "$out" | grep -E '^skip[[:space:]]' | head -20)"
+      [[ -n "$reasons" ]] || reasons="$(printf '%s\n' "$out" | tail -5)"
+      while IFS= read -r line; do
+        [[ -n "$line" ]] && log "  $line"
+      done <<< "$reasons"
       failed+=("$repo_id")
     fi
   done

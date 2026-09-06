@@ -591,18 +591,49 @@ fn check_locks(run_dir: &Path, meta: &RunMeta) -> Result<()> {
     Ok(())
 }
 
+/// Whether `status.json` records this run as failed.
+///
+/// Absent means the run has not ended at all, which is not the same as ending
+/// badly, so it answers `false`.
+fn recorded_as_failed(run_dir: &Path) -> Result<bool> {
+    let path = run_dir.join("status.json");
+    if !path.is_file() {
+        return Ok(false);
+    }
+    let status: RunStatus = files::read_json(&path)?;
+    Ok(status.state == State::Failed)
+}
+
 /// Every file `manifest.csv` names exists and still hashes to what it recorded,
 /// and nothing under `artifacts/` or `logs/` is missing from it.
 ///
 /// Both halves are needed. Without the first, "that figure came from this run"
 /// stops being true; without the second, a generated file can exist that the
 /// record never mentions, and the identity of the run is only half guaranteed.
+///
+/// The second half presupposes a record to be missing from, and that is
+/// something `finish()` alone creates: it writes `manifest.csv` first and
+/// `status.json` last. A run recorded as *failed* with no manifest therefore
+/// never reached the seal — its process was killed and `runvault gc` wrote the
+/// status, or `Drop` did, or it failed during `start`. What sits under
+/// `artifacts/` there is the debris of a write that was interrupted, not a
+/// result the record forgot to mention, and no later step can reconcile the
+/// two: holding such a run to the invariant refuses it forever, which is how
+/// one killed run blocked a whole repository's preservation every day until it
+/// was deleted by hand (MYTASK-3202).
+///
+/// The exemption is deliberately narrow, because the second half is what
+/// catches tampering. A `finished` run is held to it whatever it holds — a run
+/// claiming to be a result answers for everything it produced. So is a failed
+/// run that *did* seal: a file standing beside a manifest that does not name it
+/// appeared after the run ended, which is precisely the case this refuses.
 fn check_manifest_contents(run_dir: &Path) -> Result<()> {
     let mut recorded: BTreeSet<String> = BTreeSet::new();
+    let manifest = read_csv(&run_dir.join("manifest.csv"))?;
 
-    if let Some((header, rows)) = read_csv(&run_dir.join("manifest.csv"))? {
-        for row in &rows {
-            let rel = column(&header, row, "path");
+    if let Some((header, rows)) = &manifest {
+        for row in rows {
+            let rel = column(header, row, "path");
             let path = inside_run(run_dir, "manifest.csv", rel)?;
             if !path.is_file() {
                 return Err(Error::verify(format!(
@@ -612,7 +643,7 @@ fn check_manifest_contents(run_dir: &Path) -> Result<()> {
 
             // A row whose function cannot be named is a row that cannot be
             // checked, and a run is not verified because a check was skipped.
-            let named = column(&header, row, "algorithm");
+            let named = column(header, row, "algorithm");
             let algorithm = Algorithm::parse(named).ok_or_else(|| {
                 Error::verify(format!(
                     "manifest.csv の `{rel}` の algorithm `{named}` は照合できません"
@@ -620,13 +651,13 @@ fn check_manifest_contents(run_dir: &Path) -> Result<()> {
             })?;
             let (digest, bytes) = files::digest_file_as(&path, algorithm)?;
 
-            let recorded_bytes = column(&header, row, "bytes");
+            let recorded_bytes = column(header, row, "bytes");
             if recorded_bytes != bytes.to_string() {
                 return Err(Error::verify(format!(
                     "manifest.csv の `{rel}` のバイト数が違います (記録 {recorded_bytes}, 実体 {bytes})"
                 )));
             }
-            let recorded_digest = column(&header, row, "digest");
+            let recorded_digest = column(header, row, "digest");
             if recorded_digest != digest {
                 return Err(Error::verify(format!(
                     "manifest.csv の `{rel}` のハッシュが違います (記録 {recorded_digest}, 実体 {digest})"
@@ -634,6 +665,10 @@ fn check_manifest_contents(run_dir: &Path) -> Result<()> {
             }
             recorded.insert(rel.to_string());
         }
+    }
+
+    if manifest.is_none() && recorded_as_failed(run_dir)? {
+        return Ok(());
     }
 
     for sub in ["artifacts", "logs"] {

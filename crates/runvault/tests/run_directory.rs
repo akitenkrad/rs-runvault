@@ -626,20 +626,23 @@ fn a_dirty_working_tree_is_recorded_with_the_hash_of_its_difference() {
     assert_eq!(meta["code"]["dirty_hash"]["algorithm"], "blake3");
 }
 
-#[test]
-fn gc_turns_a_killed_run_into_a_recorded_failure() {
-    let results = tempfile::tempdir().unwrap();
+/// Starts a run, kills it without letting `Drop` run, and reaps it with `gc`.
+///
+/// The lock is backdated because `gc` refuses to reap a heartbeat under five
+/// minutes old, and this process is very much alive.
+fn a_killed_and_reaped_run(results: &Path, prepare: impl FnOnce(&Path)) -> PathBuf {
     let run = Run::start(
         RunOptions::new("e", "main")
             .repo_id("r")
             .domain("other")
             .origin(Origin::Manual)
-            .results_root(results.path())
+            .results_root(results)
             .parameters(&json!({}))
             .unwrap(),
     )
     .unwrap();
     let dir = run.dir().to_path_buf();
+    prepare(&dir);
     // Simulate SIGKILL: the process is gone, the lock stayed, `Drop` never ran.
     std::mem::forget(run);
 
@@ -654,15 +657,38 @@ fn gc_turns_a_killed_run_into_a_recorded_failure() {
     )
     .unwrap();
 
-    let reaped = runvault::gc::collect(results.path(), false).unwrap();
+    let reaped = runvault::gc::collect(results, false).unwrap();
     assert_eq!(reaped.len(), 1);
     assert_eq!(reaped[0].outcome, runvault::gc::Outcome::Reaped);
+    dir
+}
+
+#[test]
+fn gc_turns_a_killed_run_into_a_recorded_failure() {
+    let results = tempfile::tempdir().unwrap();
+    let dir = a_killed_and_reaped_run(results.path(), |_| {});
 
     let status = read_json(&dir.join("status.json"));
     assert_valid("status", &status);
     assert_eq!(status["state"], "failed");
     assert_eq!(status["error"]["kind"], "killed");
     assert!(!dir.join(".runvault.lock").exists());
+}
+
+#[test]
+fn what_gc_leaves_behind_can_still_be_preserved() {
+    let results = tempfile::tempdir().unwrap();
+    let dir = a_killed_and_reaped_run(results.path(), |dir| {
+        // The run had written half a grid when it was killed. `finish()` never
+        // ran, so nothing sealed a `manifest.csv` over it, and nothing ever
+        // will: the two ends of `gc` and `sync` have to meet here or the record
+        // of the failure can never leave this machine (MYTASK-3202).
+        std::fs::create_dir_all(dir.join("artifacts")).unwrap();
+        std::fs::write(dir.join("artifacts/grid.csv"), "t,value\n0,0.31\n").unwrap();
+    });
+
+    assert!(!dir.join("manifest.csv").exists());
+    runvault::verify::deep(&dir).unwrap();
 }
 
 #[test]
