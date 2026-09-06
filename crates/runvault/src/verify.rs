@@ -613,20 +613,30 @@ fn recorded_as_failed(run_dir: &Path) -> Result<bool> {
 ///
 /// The second half presupposes a record to be missing from, and that is
 /// something `finish()` alone creates: it writes `manifest.csv` first and
-/// `status.json` last. A run recorded as *failed* with no manifest therefore
-/// never reached the seal — its process was killed and `runvault gc` wrote the
-/// status, or `Drop` did, or it failed during `start`. What sits under
+/// `status.json` last. So among directories written by the ordinary path, a run
+/// recorded as *failed* with no manifest did not reach the seal — its process
+/// was killed and `runvault gc` wrote the status, or `Drop` did, or it failed
+/// during `start`. What sits under
 /// `artifacts/` there is the debris of a write that was interrupted, not a
 /// result the record forgot to mention, and no later step can reconcile the
 /// two: holding such a run to the invariant refuses it forever, which is how
 /// one killed run blocked a whole repository's preservation every day until it
 /// was deleted by hand (MYTASK-3202).
 ///
-/// The exemption is deliberately narrow, because the second half is what
-/// catches tampering. A `finished` run is held to it whatever it holds — a run
-/// claiming to be a result answers for everything it produced. So is a failed
-/// run that *did* seal: a file standing beside a manifest that does not name it
-/// appeared after the run ended, which is precisely the case this refuses.
+/// The exemption is deliberately narrow. A `finished` run is held to it
+/// whatever it holds — a run claiming to be a result answers for everything it
+/// produced. So is a failed run that *did* seal: a file standing beside a
+/// manifest that does not name it appeared after the run ended, which is
+/// precisely the case this refuses.
+///
+/// A missing manifest is an *inference* from the writer's ordering, not proof
+/// that cannot be forged. Anyone able to edit a run directory can delete
+/// `manifest.csv` and set `state` to `failed` to obtain the exemption. That is
+/// not a weakness this exemption introduced: neither `manifest.csv` nor the
+/// digests are signed, and `verify` asks whether a run contradicts *itself*.
+/// It is built to catch accidents — kills, crashes, a file written and never
+/// recorded — and does not claim to detect an adversary. Detecting one needs
+/// signed records, which is a separate decision.
 fn check_manifest_contents(run_dir: &Path) -> Result<()> {
     let mut recorded: BTreeSet<String> = BTreeSet::new();
     let manifest = read_csv(&run_dir.join("manifest.csv"))?;

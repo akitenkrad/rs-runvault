@@ -48,7 +48,11 @@ checked from here, which is different from being wrong.
   it. Such a run was killed, dropped, or failed at start; what it left under
   `artifacts/` is the debris of an interrupted write, and there is no later step
   that could ever list it. A run that sealed answers for its artifacts either
-  way, `finished` or `failed`.
+  way, `finished` or `failed`. Note that a missing manifest is an inference from
+  the order `finish()` writes in, not proof: anyone able to edit a run directory
+  could produce the same shape. `verify` asks whether a run contradicts itself
+  and is built to catch accidents; the records are not signed, so it does not
+  claim to detect an adversary.
 - **Walks `events.jsonl`** in full.
 
 The cost scales with the size of the run, which is why this is not what every
