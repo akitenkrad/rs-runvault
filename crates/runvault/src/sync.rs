@@ -31,11 +31,14 @@ pub const VAULT_CONFIG: &str = "runvault-vault.toml";
 pub const RECEIPT: &str = "sync.json";
 
 /// The files a canonical run contributes, before `lock/` and the globs.
-const CANONICAL_FILES: [&str; 7] = [
+const CANONICAL_FILES: [&str; 8] = [
     "run.json",
     "config.json",
     "status.json",
     "metrics.csv",
+    // 指標が何を測っているか (§3.11)．run が残す記録の一部なので，運ばないと
+    // 集約先で «名前だけ» に戻る．
+    "metrics.meta.json",
     "reference.csv",
     "manifest.csv",
     "events.jsonl",

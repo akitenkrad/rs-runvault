@@ -361,6 +361,10 @@ pub struct Run {
     started_at: DateTime<Local>,
     collision_index: Option<u64>,
     metrics: Option<csv::Writer<File>>,
+    /// The metric names this run actually recorded, and what the repository
+    /// says they mean. Only the part that applies is written out (§3.11).
+    metric_names: BTreeSet<String>,
+    metrics_declaration: Option<crate::metrics_meta::Declaration>,
     reference: Option<csv::Writer<File>>,
     events: Option<BufWriter<File>>,
     counts: Counts,
@@ -394,6 +398,12 @@ impl Run {
         } else {
             None
         };
+
+        // 宣言はリポジトリのものなので，`origin` が code でなくても読む — 手で
+        // 起こした run も同じ実験の run であって，指標の意味は同じである．
+        // 明示された `repo_root` を優先し，無ければ git から引いたものを使う．
+        // どちらも無ければ読まない（作業ディレクトリを勝手に漁らない）．
+        let declaration_root = options.repo_root.clone().or_else(|| repo_root.clone());
 
         let planned_locks = match &repo_root {
             Some(root) => crate::git::plan_locks(root)?,
@@ -498,6 +508,13 @@ impl Run {
             started_at: now,
             collision_index,
             metrics: None,
+            metric_names: BTreeSet::new(),
+            // Read once at the start. Reading it at `finish()` instead would let
+            // an edit made while the run was going decide what the run measured.
+            metrics_declaration: declaration_root
+                .as_ref()
+                .and_then(|root| crate::metrics_meta::Declaration::load(root).ok())
+                .flatten(),
             reference: None,
             events: None,
             counts: Counts::default(),
@@ -726,6 +743,7 @@ impl Run {
         // the digest would be a `manifest.csv` that disagrees with the file it
         // names, and `runvault verify` would report it as tampering.
         self.close_to_progress();
+        self.write_metrics_meta()?;
         self.write_manifest()?;
 
         // The lock goes before `status.json`: a completed run must never be found
@@ -773,6 +791,25 @@ impl Run {
             w.flush().map_err(Error::PlainIo)?;
         }
         Ok(())
+    }
+
+    /// Writes what this run's metrics mean, if the repository said.
+    ///
+    /// Nothing is written when there is no declaration, or when it describes
+    /// none of the names this run used: a file saying only "nothing is
+    /// documented" makes the same claim the absent file already makes.
+    fn write_metrics_meta(&mut self) -> Result<()> {
+        let Some(declaration) = &self.metrics_declaration else {
+            return Ok(());
+        };
+        let meta = declaration.resolve(&self.metric_names);
+        if meta.is_empty() {
+            return Ok(());
+        }
+        files::write_json_atomically(
+            &self.dir.join(crate::metrics_meta::META_FILE),
+            &meta,
+        )
     }
 
     fn write_manifest(&mut self) -> Result<()> {
@@ -840,6 +877,7 @@ impl Run {
         if flush {
             writer.flush().map_err(Error::PlainIo)?;
         }
+        self.metric_names.insert(row[4].clone());
         self.counts.metrics += 1;
         Ok(())
     }

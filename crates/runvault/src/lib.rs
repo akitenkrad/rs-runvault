@@ -41,6 +41,7 @@ pub mod ids;
 pub mod legacy;
 pub mod lockfile;
 pub mod meta;
+pub mod metrics_meta;
 pub mod paths;
 pub mod pointer;
 pub mod progress;
