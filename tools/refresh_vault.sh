@@ -33,8 +33,68 @@ SEARCH_ROOTS=(
 
 log() { printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"; }
 
+# Say so before anything can block. Until 2026-09-07 the first line this script
+# wrote came after the first repository had finished syncing, so a stall before
+# that point left no trace at all: a run that started at 5:30 and did nothing
+# until 8:58 opened its log with an 8:58 timestamp and read as a job that had
+# merely started late (MYTASK-3215).
+log "starting (pid $$)"
+
+# A wall-clock limit for every runvault call. macOS ships neither timeout(1) nor
+# gtimeout, so it is built here.
+#
+# The point is not to bound how long real work may take -- the whole refresh
+# runs in about a minute -- but to make a stall end. A TCC consent dialog puts
+# the call to sleep for as long as nobody answers it, and an indefinite sleep
+# inside a daily job is worse than a failure: the lock stays held, the next
+# morning's run exits immediately and quietly on it, and the job goes on looking
+# like it runs every day while syncing nothing. That is the accident this script
+# was written to prevent, reached from a different direction.
+#
+# Callers do the logging: a message written here would be swallowed by whatever
+# redirection the call site applies to this function.
+run_limited() {
+  local limit="$1"
+  shift
+  "$@" &
+  local pid=$!
+  local waited=0
+  while kill -0 "$pid" 2>/dev/null; do
+    if (( waited >= limit )); then
+      kill -TERM "$pid" 2>/dev/null
+      sleep 2
+      kill -KILL "$pid" 2>/dev/null
+      wait "$pid" 2>/dev/null
+      return 124
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+  wait "$pid"
+}
+
+# Generous on purpose: these catch a hang, not slowness. The longest real stage
+# is `query --refresh` at about 40s over 1,200 runs. Overridable from the
+# environment so that the timeout path can be exercised without waiting for it.
+LIMIT_GC="${LIMIT_GC:-300}"
+LIMIT_SYNC="${LIMIT_SYNC:-900}"
+LIMIT_QUERY="${LIMIT_QUERY:-1800}"
+LIMIT_REPORT="${LIMIT_REPORT:-600}"
+
+# A timeout says the binary is wedged, not that this particular repository is
+# bad, so the remaining ones would each wedge in turn. Stop while the log still
+# says something useful.
+abort_wedged() {
+  log "FATAL: $1 did not return within ${2}s; aborting"
+  log "  the binary is wedged rather than this repository being at fault."
+  log "  Look for a permission dialog: macOS blocks the first read of"
+  log "  ~/Documents until someone answers it, and a rebuilt binary has to ask"
+  log "  again unless it was signed by tools/install_cli.sh (MYTASK-3215)."
+  exit 124
+}
+
 if [[ ! -x "$RUNVAULT" ]]; then
-  log "FATAL: $RUNVAULT is not executable. Run: cargo install --path crates/runvault-cli"
+  log "FATAL: $RUNVAULT is not executable. Run: tools/install_cli.sh"
   exit 1
 fi
 
@@ -53,9 +113,27 @@ fi
 #
 # mkdir is the lock because it is atomic on every filesystem this will meet.
 LOCK="${TMPDIR:-/tmp}/runvault-refresh.lock"
+
+# How long a live holder may hold the lock before it is called stuck rather than
+# busy. A refresh takes about a minute.
+STUCK_LOCK_MINUTES=60
+
 if ! mkdir "$LOCK" 2>/dev/null; then
-  if [[ -f "$LOCK/pid" ]] && kill -0 "$(cat "$LOCK/pid" 2>/dev/null)" 2>/dev/null; then
-    log "another refresh is running (pid $(cat "$LOCK/pid")); exiting without doing anything"
+  holder="$(cat "$LOCK/pid" 2>/dev/null)"
+  if [[ -n "$holder" ]] && kill -0 "$holder" 2>/dev/null; then
+    # Age matters, and reporting its absence is what made the 2026-09-07 stall
+    # invisible. A holder blocked on a consent dialog is alive, so this branch
+    # answered "another refresh is running" and exited 0 -- a hand-run refresh
+    # during those three and a half hours would have reported success while
+    # copying nothing (MYTASK-3215).
+    held_min=$(( ( $(date +%s) - $(stat -f %m "$LOCK" 2>/dev/null || echo 0) ) / 60 ))
+    if (( held_min >= STUCK_LOCK_MINUTES )); then
+      log "FATAL: pid $holder has held the lock for ${held_min}m; that is stuck, not busy"
+      log "  Look for a permission dialog first -- answering it may let it finish."
+      log "  Otherwise: kill $holder && rm -rf $LOCK"
+      exit 1
+    fi
+    log "another refresh is running (pid $holder, holding for ${held_min}m); exiting without doing anything"
     exit 0
   fi
   # The holder is gone: a previous run was killed before it could clean up.
@@ -91,7 +169,11 @@ for root in "${SEARCH_ROOTS[@]}"; do
     #
     # Its failure is not fatal. A repository that cannot be reaped can still be
     # synced, and saying so is better than skipping the copy.
-    if ! "$RUNVAULT" gc --results-root "$results" >/dev/null 2>&1; then
+    run_limited "$LIMIT_GC" "$RUNVAULT" gc --results-root "$results" >/dev/null 2>&1
+    rc=$?
+    if (( rc == 124 )); then
+      abort_wedged "gc for $repo_id" "$LIMIT_GC"
+    elif (( rc != 0 )); then
       log "WARNING: gc failed for $repo_id (continuing to sync)"
     fi
 
@@ -103,7 +185,11 @@ for root in "${SEARCH_ROOTS[@]}"; do
     # and copies nothing, and "synced logistello" would read as if data moved.
     # Saying "0 runs" is the difference between a quiet success and a quiet
     # nothing, which is the confusion this whole script exists to remove.
-    if out="$("$RUNVAULT" sync --repo-id "$repo_id" --results-root "$results" --vault "$VAULT" 2>&1)"; then
+    out="$(run_limited "$LIMIT_SYNC" "$RUNVAULT" sync --repo-id "$repo_id" --results-root "$results" --vault "$VAULT" 2>&1)"
+    rc=$?
+    if (( rc == 124 )); then
+      abort_wedged "sync for $repo_id" "$LIMIT_SYNC"
+    elif (( rc == 0 )); then
       n="$(printf '%s\n' "$out" | sed -n 's/^\([0-9][0-9]*\) run.*同期しました.*/\1/p' | tail -1)"
       if [[ -z "$n" ]]; then
         # The summary line changed shape. Do not guess a number.
@@ -138,13 +224,21 @@ log "sync done: $synced ok (${empty} with 0 runs), ${#failed[@]} failed"
 # ones that did sync should still reach the dashboard. Their own failures are
 # fatal to this run, though, because a stale index is what this script exists
 # to prevent.
-if ! "$RUNVAULT" query --refresh --vault "$VAULT" >/dev/null; then
+run_limited "$LIMIT_QUERY" "$RUNVAULT" query --refresh --vault "$VAULT" >/dev/null
+rc=$?
+if (( rc == 124 )); then
+  abort_wedged "query --refresh" "$LIMIT_QUERY"
+elif (( rc != 0 )); then
   log "FATAL: query --refresh failed"
   exit 1
 fi
 log "index rebuilt"
 
-if ! "$RUNVAULT" report --obsidian --vault "$VAULT" -o "$DASHBOARD_JSON"; then
+run_limited "$LIMIT_REPORT" "$RUNVAULT" report --obsidian --vault "$VAULT" -o "$DASHBOARD_JSON"
+rc=$?
+if (( rc == 124 )); then
+  abort_wedged "report --obsidian" "$LIMIT_REPORT"
+elif (( rc != 0 )); then
   log "FATAL: report --obsidian failed"
   exit 1
 fi
