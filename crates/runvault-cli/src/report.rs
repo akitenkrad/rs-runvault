@@ -114,9 +114,15 @@ pub fn build(vault_root: &Path) -> Result<Value, String> {
     let reference_table = table(vault_root, "reference");
     let targets_table = table(vault_root, "run_targets");
     let jira_table = table(vault_root, "run_jira");
+    let docs_table = table(vault_root, "metric_docs");
 
-    let (experiments, carried) =
-        experiments(&connection, &runs_table, &metrics_table, &jira_table)?;
+    let (experiments, carried) = experiments(
+        &connection,
+        &runs_table,
+        &metrics_table,
+        &jira_table,
+        &docs_table,
+    )?;
     let runs = runs(
         &connection,
         &runs_table,
@@ -129,14 +135,34 @@ pub fn build(vault_root: &Path) -> Result<Value, String> {
     let warnings = warnings(&connection, &runs_table)?;
 
     Ok(json!({
-        "schema_version": "1.3",
+        "schema_version": "1.4",
         "vocab_version": vocabulary.version,
         "generated_at": chrono::Local::now().to_rfc3339(),
         "freshness_hours": vocabulary.freshness_hours,
+        "metric_vocabulary": metric_vocabulary(),
         "experiments": experiments,
         "runs": runs,
         "warnings": warnings,
     }))
+}
+
+/// What the registry says the reserved metric names mean.
+///
+/// Carried once rather than copied into every experiment: the four reserved
+/// names belong to the vocabulary, not to a repository, and a screen that found
+/// them under an experiment would read them as something that experiment
+/// declared. Without them the dashboard would print "説明が記録されていません"
+/// next to `n_units`, which appears in nearly every run and whose meaning has
+/// never been in doubt.
+fn metric_vocabulary() -> Value {
+    let mut out = Map::new();
+    for (name, reserved) in &runvault::vocabulary::get().metric_names {
+        out.insert(
+            name.clone(),
+            json!({"meaning": reserved.meaning, "scope": reserved.scopes}),
+        );
+    }
+    Value::Object(out)
 }
 
 /// One entry per `(repo_id, experiment)`, counted over every run in the index.
@@ -150,6 +176,7 @@ fn experiments(
     runs_table: &str,
     metrics_table: &str,
     jira_table: &str,
+    docs_table: &str,
 ) -> Result<(Vec<Value>, Carried), String> {
     // `experiment` is grouped as it is, `NULL` included: a legacy run written
     // straight into `results/` never recorded which experiment it belonged to,
@@ -170,6 +197,7 @@ fn experiments(
             "last_run_at": moment(&row[4]),
             "primary_metrics": Value::Array(Vec::new()),
             "jira": Value::Array(Vec::new()),
+            "metric_docs": json!({"names": Map::new(), "patterns": []}),
             "cost_usd": Value::Null,
             "git_remote": Value::Null,
         }));
@@ -281,6 +309,8 @@ fn experiments(
         }
     }
 
+    let docs = metric_docs(connection, runs_table, docs_table)?;
+
     for experiment in &mut out {
         let key = (
             experiment["repo_id"]
@@ -301,8 +331,79 @@ fn experiments(
         if let Some(remote) = remotes.get(&key) {
             experiment["git_remote"] = json!(remote);
         }
+        if let Some(found) = docs.get(&key) {
+            experiment["metric_docs"] = found.clone();
+        }
     }
     Ok((out, carried))
+}
+
+/// What each experiment's metrics mean, as its repository declared it.
+///
+/// The declaration reaches every run of the experiment, so the same rows come
+/// back once per run and are folded here by `(kind, key)`. A repository that
+/// changed a description mid-experiment leaves two rows for one name; the first
+/// in order wins, and the disagreement is not resolved by inventing a third
+/// answer — `metrics.meta.json` in each run keeps what that run was told.
+fn metric_docs(
+    connection: &Connection,
+    runs_table: &str,
+    docs_table: &str,
+) -> Result<BTreeMap<(String, Option<String>), Value>, String> {
+    let sql = format!(
+        "SELECT DISTINCT r.repo_id, r.experiment, d.kind, d.key, d.meaning, d.unit,
+                d.direction, d.axes
+         FROM {runs_table} AS r JOIN {docs_table} AS d USING (run_key)
+         ORDER BY 1, 2, 3, 4"
+    );
+    let mut out: BTreeMap<(String, Option<String>), Value> = BTreeMap::new();
+    each_row(connection, &sql, |row| {
+        let (Some(kind), Some(key)) = (text(&row[2]), text(&row[3])) else {
+            return Ok(());
+        };
+        let entry = out
+            .entry((text(&row[0]).unwrap_or_default(), text(&row[1])))
+            .or_insert_with(|| json!({"names": Map::new(), "patterns": []}));
+        let meaning = text(&row[4]);
+        let unit = text(&row[5]);
+        let direction = text(&row[6]);
+        match kind.as_str() {
+            "name" => {
+                // `meaning` is what a named description is for; a row without
+                // one describes nothing and is left out rather than shown as an
+                // empty explanation.
+                let Some(meaning) = meaning else {
+                    return Ok(());
+                };
+                let names = entry["names"].as_object_mut().expect("names is an object");
+                names.entry(key).or_insert(json!({
+                    "meaning": meaning,
+                    "unit": unit,
+                    "direction": direction,
+                }));
+            }
+            "pattern" => {
+                let axes: Option<Value> = text(&row[7])
+                    .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+                    .filter(Value::is_object);
+                let patterns = entry["patterns"]
+                    .as_array_mut()
+                    .expect("patterns is an array");
+                if !patterns.iter().any(|p| p["pattern"] == json!(key)) {
+                    patterns.push(json!({
+                        "pattern": key,
+                        "meaning": meaning,
+                        "unit": unit,
+                        "direction": direction,
+                        "axes": axes,
+                    }));
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    })?;
+    Ok(out)
 }
 
 /// Every run in the index, newest first.

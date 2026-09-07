@@ -12,12 +12,13 @@
     "freshness_hours",
     "experiments",
     "runs",
-    "warnings"
+    "warnings",
+    "metric_vocabulary"
   ],
   "properties": {
     "schema_version": {
       "type": "string",
-      "const": "1.3"
+      "const": "1.4"
     },
     "vocab_version": {
       "type": "string",
@@ -43,7 +44,8 @@
           "n_finished",
           "last_run_at",
           "primary_metrics",
-          "jira"
+          "jira",
+          "metric_docs"
         ],
         "properties": {
           "experiment": {
@@ -107,6 +109,111 @@
               "pattern": "^MYTASK-[0-9]+$"
             },
             "description": "その実験の run が参照する課題キー (重複なし). runs[] は max_runs で打ち切られるため, 研究テーマ別の束ねはこちらから組む — 打ち切りの外にある実験がテーマから丸ごと消えるのを防ぐ"
+          },
+          "metric_docs": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "names",
+              "patterns"
+            ],
+            "description": "この実験の指標が何を測っているか (設計書 §3.11). 説明は run ではなく実験の性質なので experiments[] が持つ — runs[].metrics は主要な 12 件しか載せていないため, そちらに付けると届かない",
+            "properties": {
+              "names": {
+                "type": "object",
+                "description": "指標名そのものの説明. リポジトリの runvault.toml が宣言し, run が写したもの",
+                "additionalProperties": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "meaning"
+                  ],
+                  "properties": {
+                    "meaning": {
+                      "type": "string"
+                    },
+                    "unit": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "description": "ratio / count / sec / usd など. 値の隣に出す"
+                    },
+                    "direction": {
+                      "anyOf": [
+                        {
+                          "enum": [
+                            "up",
+                            "down",
+                            "none"
+                          ]
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "どちらが良いか. null は «誰も決めていない» であって «どちらでもない» ではない — 画面は推測で «良い / 悪い» を言わない"
+                    }
+                  }
+                }
+              },
+              "patterns": {
+                "type": "array",
+                "description": "名前の形の説明. 生成された木はこちらで説明される (javitz1991 は 4 つの形で 11,309 件). 名前ごとの説明が先に見られ, 当たらなければ上から順に形を試す",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "pattern"
+                  ],
+                  "properties": {
+                    "pattern": {
+                      "type": "string",
+                      "description": "区画を `.` で区切った雛形. `{名前}` の区画は軸で, 任意の 1 区画に当たる. 区画の数まで一致しないと当たらない"
+                    },
+                    "meaning": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "description": "何を測っているか. 形の宣言は書かないことがある"
+                    },
+                    "unit": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "description": "ratio / count / sec / usd など. 値の隣に出す"
+                    },
+                    "direction": {
+                      "anyOf": [
+                        {
+                          "enum": [
+                            "up",
+                            "down",
+                            "none"
+                          ]
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "どちらが良いか. null は «誰も決めていない» であって «どちらでもない» ではない — 画面は推測で «良い / 悪い» を言わない"
+                    },
+                    "axes": {
+                      "type": [
+                        "object",
+                        "null"
+                      ],
+                      "additionalProperties": {
+                        "type": "string"
+                      },
+                      "description": "軸名からその位置の意味へ"
+                    }
+                  }
+                }
+              }
+            }
           }
         }
       }
@@ -266,23 +373,36 @@
             "description": "どのリポジトリの run か. 集約先での置き場 (<集約先>/<repo_id>/…) を引くのに要る"
           },
           "sweep_id": {
-            "type": ["string", "null"],
+            "type": [
+              "string",
+              "null"
+            ],
             "description": "その run が属する sweep. 親も点も同じ値を持つ. 40 点の sweep を 40 個の無関係な行にしないために要る (run.json の lineage.sweep_id)"
           },
           "parent_run_uid": {
             "anyOf": [
-              { "$ref": "common.json#/$defs/run_uid" },
-              { "type": "null" }
+              {
+                "$ref": "common.json#/$defs/run_uid"
+              },
+              {
+                "type": "null"
+              }
             ],
             "description": "sweep の点なら親 run. 親自身と単発の run では null"
           },
           "config_hash": {
-            "type": ["string", "null"],
+            "type": [
+              "string",
+              "null"
+            ],
             "pattern": "^[0-9a-f]{64}$",
             "description": "条件のハッシュ. legacy run には無い"
           },
           "env_hash": {
-            "type": ["string", "null"],
+            "type": [
+              "string",
+              "null"
+            ],
             "pattern": "^[0-9a-f]{64}$",
             "description": "環境のハッシュ. 同じ config_hash で割れていれば «条件は同じなのに環境が違う» (warnings の env_split が指しているもの)"
           }
@@ -323,6 +443,28 @@
               "null"
             ],
             "minimum": 0
+          }
+        }
+      }
+    },
+    "metric_vocabulary": {
+      "type": "object",
+      "description": "予約指標の意味. 語彙 (vocabulary.toml [metric_names]) が決めるものでリポジトリのものではないので, experiments[] に写さず 1 か所に置く. 画面は «名前の宣言 → 予約語 → 形» の順に見る",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "meaning"
+        ],
+        "properties": {
+          "meaning": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         }
       }

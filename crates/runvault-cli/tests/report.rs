@@ -191,7 +191,7 @@ fn the_payload_matches_the_contract_the_dashboard_reads() {
     let report = payload(results.path(), vault.path());
 
     assert_valid(&report);
-    assert_eq!(report["schema_version"], json!("1.3"));
+    assert_eq!(report["schema_version"], json!("1.4"));
     assert!(report["vocab_version"].as_str().is_some());
     assert_eq!(report["freshness_hours"], json!(24.0));
     // The list is not capped any more, so there is no rule to report.
@@ -441,4 +441,134 @@ fn asking_for_no_destination_is_an_error() {
         .output()
         .unwrap();
     assert!(!out.status.success());
+}
+
+/// A repository that declares what its metrics mean, and a run under it.
+///
+/// The declaration is the source (§3.11); everything the dashboard shows about
+/// a metric has to have come from here.
+fn declared_run(results: &Path, experiment: &str, metrics: &[&str]) -> tempfile::TempDir {
+    let repo = tempfile::tempdir().unwrap();
+    std::fs::write(
+        repo.path().join("runvault.toml"),
+        r#"
+        [metrics."segregation_index"]
+        meaning = "同類に囲まれている度合い"
+        unit = "ratio"
+        direction = "down"
+        range = [0.0, 1.0]
+
+        [metrics."final_iteration"]
+        meaning = "止まるまでの反復回数"
+        unit = "count"
+
+        [[metric_patterns]]
+        pattern = "{scenario}.q_ordinal.{index}.{agg}"
+        meaning = "IDES の順序統計量"
+        unit = "count"
+        [metric_patterns.axes]
+        scenario = "投入した通信シナリオ"
+        index = "成分番号"
+        agg = "その成分の集約"
+        "#,
+    )
+    .unwrap();
+    let mut run = Run::start(
+        RunOptions::new(experiment, "main")
+            .repo_id(REPO_ID)
+            .domain("simulation")
+            .origin(Origin::Manual)
+            .visibility(Visibility::Public)
+            .results_root(results)
+            .repo_root(repo.path())
+            .parameters(&json!({"rows": 13, "seed": 7}))
+            .unwrap()
+            .seed_pointers(["/seed"])
+            .master_seed(7),
+    )
+    .unwrap();
+    for (i, name) in metrics.iter().enumerate() {
+        run.log_metric(*name, i as f64).send().unwrap();
+    }
+    run.finish().unwrap();
+    repo
+}
+
+fn experiment_named<'a>(report: &'a Value, name: &str) -> &'a Value {
+    report["experiments"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["experiment"] == json!(name))
+        .unwrap_or_else(|| panic!("{name} がありません: {report}"))
+}
+
+#[test]
+fn an_experiment_carries_what_its_metrics_mean() {
+    // 説明は run ではなく実験の性質なので `experiments[]` に載る．`runs[].metrics`
+    // は主要な 12 件しか載せていないので，そちらに付けると届かない．
+    let results = tempfile::tempdir().unwrap();
+    let vault = private_vault();
+    let _repo = declared_run(
+        results.path(),
+        "schelling",
+        &[
+            "segregation_index",
+            "final_iteration",
+            "normal.q_ordinal.0.mean",
+            "undocumented_metric",
+        ],
+    );
+    let report = payload(results.path(), vault.path());
+    assert_valid(&report);
+
+    let docs = &experiment_named(&report, "schelling")["metric_docs"];
+    assert_eq!(
+        docs["names"]["segregation_index"],
+        json!({"meaning": "同類に囲まれている度合い", "unit": "ratio", "direction": "down"})
+    );
+    // `direction` を書かなかった指標には，画面が使える «どちらが良いか» が無い．
+    assert_eq!(docs["names"]["final_iteration"]["direction"], json!(null));
+    assert_eq!(docs["patterns"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        docs["patterns"][0]["pattern"],
+        json!("{scenario}.q_ordinal.{index}.{agg}")
+    );
+    assert_eq!(docs["patterns"][0]["axes"]["index"], json!("成分番号"));
+    // 誰も説明していない名前は，説明が無いまま残る．埋めない．
+    assert!(docs["names"].get("undocumented_metric").is_none(), "{docs}");
+}
+
+#[test]
+fn the_reserved_names_are_explained_once_rather_than_per_experiment() {
+    // `n_units` はほぼ全ての run にある．実験ごとに写すと，語彙が決めた意味を
+    // 実験が宣言したように見せてしまう．
+    let results = tempfile::tempdir().unwrap();
+    let vault = private_vault();
+    let _repo = declared_run(results.path(), "schelling", &["segregation_index"]);
+    let report = payload(results.path(), vault.path());
+
+    assert!(
+        report["metric_vocabulary"]["n_units"]["meaning"]
+            .as_str()
+            .is_some_and(|m| !m.is_empty()),
+        "{report}"
+    );
+    let docs = &experiment_named(&report, "schelling")["metric_docs"];
+    assert!(docs["names"].get("n_units").is_none(), "{docs}");
+}
+
+#[test]
+fn an_experiment_that_declared_nothing_says_so_with_an_empty_pair() {
+    // 既存の 5 リポジトリの姿．鍵が無いのと «空» を分けておかないと，画面が
+    // «読み込み中» と «説明が無い» を区別できない．
+    let results = tempfile::tempdir().unwrap();
+    let vault = private_vault();
+    replication_run(results.path(), 42, 0.83);
+    let report = payload(results.path(), vault.path());
+    assert_valid(&report);
+
+    let docs = &experiment_named(&report, "schelling")["metric_docs"];
+    assert_eq!(docs["names"], json!({}), "{docs}");
+    assert_eq!(docs["patterns"], json!([]), "{docs}");
 }
