@@ -1,7 +1,7 @@
 //! `runvault query --refresh` — the flattened index the SQL reads.
 //!
 //! Thousands of runs cannot be read out of their JSON on every question, so the
-//! aggregation repository is walked once and reduced to seven parquet tables
+//! aggregation repository is walked once and reduced to eight parquet tables
 //! (design note §5.2). The index is a derived thing: it is not tracked by git,
 //! and deleting it costs nothing but the walk.
 //!
@@ -15,6 +15,7 @@ use std::path::{Path, PathBuf};
 
 use runvault::legacy::{self, LegacyRun};
 use runvault::meta::RunMeta;
+use runvault::metrics_meta::MetricsMeta;
 use runvault::status::{RunStatus, State};
 use runvault::sync::{Compression, SyncReceipt};
 use serde::Deserialize;
@@ -587,7 +588,63 @@ fn flatten_canonical(
             rows.push("manifest", row);
         }
     }
+
+    // What the run's metrics mean, if the repository said. The run carries the
+    // answer (§3.11); the index carries it too because `report --obsidian`
+    // reads nothing else, and a meaning the dashboard cannot reach is a
+    // meaning nobody reads.
+    if let Some(meta_docs) = stored_json::<MetricsMeta>(dir, receipt, "metrics.meta.json") {
+        for (name, doc) in &meta_docs.metrics {
+            let mut row = doc_row(&key, &meta.run_uid, "name", name);
+            row.insert("meaning", Cell::Text(doc.meaning.clone()));
+            row.insert("unit", Cell::text(doc.unit.as_deref()));
+            row.insert("direction", Cell::text(direction(doc.direction)));
+            row.insert("axes", Cell::Null);
+            rows.push("metric_docs", row);
+        }
+        for matched in &meta_docs.patterns {
+            let pattern = &matched.pattern;
+            let mut row = doc_row(&key, &meta.run_uid, "pattern", &pattern.pattern);
+            row.insert("meaning", Cell::text(pattern.meaning.as_deref()));
+            row.insert("unit", Cell::text(pattern.unit.as_deref()));
+            row.insert("direction", Cell::text(direction(pattern.direction)));
+            // The axes are what a family's meaning is made of, and there are
+            // never many of them, so they travel as one JSON column rather than
+            // as a table nothing would join against.
+            row.insert(
+                "axes",
+                match serde_json::to_string(&pattern.axes) {
+                    Ok(text) if !pattern.axes.is_empty() => Cell::Text(text),
+                    _ => Cell::Null,
+                },
+            );
+            rows.push("metric_docs", row);
+        }
+    }
     Ok(())
+}
+
+/// The columns every `metric_docs` row shares.
+fn doc_row(key: &str, run_uid: &str, kind: &'static str, name: &str) -> Row {
+    let mut row = Row::new();
+    row.insert("run_key", Cell::Text(key.to_string()));
+    row.insert("run_uid", Cell::Text(run_uid.to_string()));
+    row.insert("kind", Cell::Text(kind.to_string()));
+    row.insert("key", Cell::Text(name.to_string()));
+    row
+}
+
+/// `direction` as the column spells it, or nothing when it was not said.
+///
+/// The absent value and `none` are different claims — "nobody decided" against
+/// "neither way is better" — so the second is written out and the first is null.
+fn direction(value: Option<runvault::metrics_meta::Direction>) -> Option<&'static str> {
+    use runvault::metrics_meta::Direction;
+    value.map(|d| match d {
+        Direction::Up => "up",
+        Direction::Down => "down",
+        Direction::None => "none",
+    })
 }
 
 /// Flattens a legacy run, which has no `run.json` and no `run_uid`.

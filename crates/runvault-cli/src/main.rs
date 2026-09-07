@@ -7,6 +7,7 @@
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+mod audit;
 mod index;
 mod report;
 
@@ -38,6 +39,33 @@ enum Command {
     Query(QueryArgs),
     /// Summarize the index for the Obsidian dashboard.
     Report(ReportArgs),
+    /// Ask the index about the metrics themselves.
+    Metrics(MetricsArgs),
+}
+
+#[derive(Args)]
+struct MetricsArgs {
+    #[command(subcommand)]
+    command: MetricsCommand,
+}
+
+#[derive(Subcommand)]
+enum MetricsCommand {
+    /// Count, per experiment, the metric names nothing describes.
+    Audit(AuditArgs),
+}
+
+#[derive(Args)]
+struct AuditArgs {
+    /// The aggregation repository whose index is counted.
+    #[arg(long)]
+    vault: Option<PathBuf>,
+    /// Print the count as JSON instead of a report.
+    #[arg(long)]
+    json: bool,
+    /// How many undescribed names to print per experiment. `0` prints them all.
+    #[arg(long, default_value_t = audit::DEFAULT_LIMIT)]
+    limit: usize,
 }
 
 #[derive(Args)]
@@ -173,6 +201,9 @@ fn main() -> ExitCode {
         Command::Sync(args) => cmd_sync(&args),
         Command::Query(args) => cmd_query(&args),
         Command::Report(args) => cmd_report(&args),
+        Command::Metrics(args) => match &args.command {
+            MetricsCommand::Audit(args) => cmd_metrics_audit(args),
+        },
     };
     match result {
         Ok(code) => code,
@@ -517,6 +548,25 @@ fn cmd_report(args: &ReportArgs) -> Result<ExitCode> {
             );
         }
         None => println!("{text}"),
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Counts what the vault's metrics say about themselves.
+///
+/// It only ever prints. Nothing is refused and nothing is removed on the
+/// strength of a missing description: the runs that exist cannot be given one
+/// now, and a count is what the decision to require them will be made from.
+fn cmd_metrics_audit(args: &AuditArgs) -> Result<ExitCode> {
+    let vault = args.vault.clone().unwrap_or_else(default_vault);
+    let counted = audit::build(&vault).map_err(runvault::Error::Spec)?;
+    if args.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&audit::to_json(&counted, args.limit))?
+        );
+    } else {
+        print!("{}", audit::render(&counted, args.limit));
     }
     Ok(ExitCode::SUCCESS)
 }

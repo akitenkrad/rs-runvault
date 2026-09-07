@@ -29,12 +29,12 @@ fn is_reserved(name: &str) -> bool {
 }
 
 /// The absolute path of one index table, quoted for SQL.
-fn table(vault_root: &Path, name: &str) -> String {
+pub(crate) fn table(vault_root: &Path, name: &str) -> String {
     let path = vault_root.join(INDEX_DIR).join(format!("{name}.parquet"));
     format!("'{}'", path.display().to_string().replace('\'', "''"))
 }
 
-fn text(value: &Sql) -> Option<String> {
+pub(crate) fn text(value: &Sql) -> Option<String> {
     match value {
         Sql::Text(v) => Some(v.clone()),
         _ => None,
@@ -86,7 +86,7 @@ fn moment(value: &Sql) -> Option<String> {
 }
 
 /// Runs one query and hands each row to `f` as a slice of values.
-fn each_row(
+pub(crate) fn each_row(
     connection: &Connection,
     sql: &str,
     mut f: impl FnMut(&[Sql]) -> Result<(), String>,
@@ -115,7 +115,8 @@ pub fn build(vault_root: &Path) -> Result<Value, String> {
     let targets_table = table(vault_root, "run_targets");
     let jira_table = table(vault_root, "run_jira");
 
-    let (experiments, carried) = experiments(&connection, &runs_table, &metrics_table, &jira_table)?;
+    let (experiments, carried) =
+        experiments(&connection, &runs_table, &metrics_table, &jira_table)?;
     let runs = runs(
         &connection,
         &runs_table,
@@ -653,7 +654,10 @@ mod tests {
     #[test]
     fn the_list_is_newest_first() {
         let connection = Connection::open_in_memory().unwrap();
-        index_with(&connection, &[("old", "e", 1), ("new", "e", 3), ("mid", "e", 2)]);
+        index_with(
+            &connection,
+            &[("old", "e", 1), ("new", "e", 3), ("mid", "e", 2)],
+        );
         let got = listed(&connection, &Carried::new());
         let keys: Vec<&str> = got.iter().map(|r| r["run_key"].as_str().unwrap()).collect();
         assert_eq!(keys, ["new", "mid", "old"]);

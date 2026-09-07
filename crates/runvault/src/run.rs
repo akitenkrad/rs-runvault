@@ -806,10 +806,7 @@ impl Run {
         if meta.is_empty() {
             return Ok(());
         }
-        files::write_json_atomically(
-            &self.dir.join(crate::metrics_meta::META_FILE),
-            &meta,
-        )
+        files::write_json_atomically(&self.dir.join(crate::metrics_meta::META_FILE), &meta)
     }
 
     fn write_manifest(&mut self) -> Result<()> {

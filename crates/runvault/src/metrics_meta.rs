@@ -191,9 +191,8 @@ impl Declaration {
             return Ok(None);
         }
         let text = std::fs::read_to_string(&path).map_err(Error::PlainIo)?;
-        let parsed: Self = toml::from_str(&text).map_err(|e| {
-            Error::Spec(format!("{}: {e}", path.display()))
-        })?;
+        let parsed: Self =
+            toml::from_str(&text).map_err(|e| Error::Spec(format!("{}: {e}", path.display())))?;
         Ok(Some(parsed))
     }
 
@@ -214,11 +213,7 @@ impl Declaration {
             }
             // The exact name wins over a pattern: a family can be described in
             // general and one of its members called out in particular.
-            match self
-                .metric_patterns
-                .iter()
-                .position(|p| p.matches(name))
-            {
+            match self.metric_patterns.iter().position(|p| p.matches(name)) {
                 Some(i) => counts[i] += 1,
                 None => undescribed.push(name.clone()),
             }
@@ -291,7 +286,10 @@ mod tests {
         let p = &d.metric_patterns[0];
         assert!(p.matches("normal.q_ordinal.0.mean"));
         assert!(p.matches("masquerade.q_ordinal.17.max"));
-        assert!(!p.matches("normal.other.0.mean"), "固定の語まで当ててはいけない");
+        assert!(
+            !p.matches("normal.other.0.mean"),
+            "固定の語まで当ててはいけない"
+        );
     }
 
     #[test]
@@ -331,7 +329,10 @@ mod tests {
             "#,
         )
         .unwrap();
-        let meta = d.resolve(&names(&["normal.q_ordinal.0.mean", "normal.q_ordinal.1.mean"]));
+        let meta = d.resolve(&names(&[
+            "normal.q_ordinal.0.mean",
+            "normal.q_ordinal.1.mean",
+        ]));
         assert_eq!(meta.metrics.len(), 1);
         assert_eq!(meta.patterns[0].n_matched, 1);
     }

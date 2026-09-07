@@ -466,6 +466,60 @@
       ],
       "null_equality": true
     },
+    "metric_docs": {
+      "primary_key": [
+        "run_key",
+        "kind",
+        "key"
+      ],
+      "columns": [
+        {
+          "name": "run_key",
+          "type": "string",
+          "nullable": false
+        },
+        {
+          "name": "run_uid",
+          "type": "string",
+          "nullable": true
+        },
+        {
+          "name": "kind",
+          "type": "string",
+          "nullable": false,
+          "note": "name = その名前ひとつの説明, pattern = 名前の形の説明"
+        },
+        {
+          "name": "key",
+          "type": "string",
+          "nullable": false,
+          "note": "kind=name なら指標名, kind=pattern なら `{軸}` を含む雛形"
+        },
+        {
+          "name": "meaning",
+          "type": "string",
+          "nullable": true,
+          "note": "何を測っているか. 形の宣言は書かないことがある"
+        },
+        {
+          "name": "unit",
+          "type": "string",
+          "nullable": true
+        },
+        {
+          "name": "direction",
+          "type": "string",
+          "nullable": true,
+          "note": "up / down / none. 無いときは画面が «どちらが良いか» を言わない"
+        },
+        {
+          "name": "axes",
+          "type": "string",
+          "nullable": true,
+          "note": "kind=pattern のときだけ. 軸名から意味への対応を JSON 文字列で持つ"
+        }
+      ]
+    },
     "reference": {
       "primary_key": [
         "run_key",
