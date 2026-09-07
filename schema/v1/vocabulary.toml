@@ -1,6 +1,6 @@
 # runvault コア語彙. 追加・廃止はこのファイルを更新し vocab_version を上げる.
 # 実験固有の語は namespace 付き ( "x.<repo_id>.<name>" ) とし, コア語彙とは衝突させない.
-vocab_version = "1.2"
+vocab_version = "1.4"
 
 [domains]
 # analysis = 決定的な解析計算 (RNG を使わない). simulation を名乗ると master_seed が必須になり,
@@ -42,4 +42,9 @@ wall_sec = "runs.duration_sec"
 [report]
 # runvault report --obsidian の既定値
 freshness_hours = 24
-max_runs = 200
+# runs[] は打ち切らない (1.4 で max_runs_per_experiment を廃止). 重かったのは
+# run の数ではなく run が抱える指標で, schelling は 654 run で 0.5 MB, javitz1991 は
+# 298 run で 15 MB だった (1 run が最大 1,270 個の指標名を持つ).
+# 要約に載せる指標は実験ごとに出現回数の多い順で summary_metrics 件まで.
+# 残りは metrics.csv にあり, 画面は比べる数本だけを読みに行く.
+summary_metrics = 12

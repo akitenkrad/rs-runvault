@@ -17,7 +17,7 @@
   "properties": {
     "schema_version": {
       "type": "string",
-      "const": "1.1"
+      "const": "1.3"
     },
     "vocab_version": {
       "type": "string",
@@ -199,7 +199,13 @@
             "type": "object",
             "additionalProperties": {
               "type": "number"
-            }
+            },
+            "description": "その実験の主要な指標だけ (出現回数の多い順に vocabulary.toml の [report] summary_metrics 件まで. primary_metrics は必ず含む). **run が記録した全部ではない** — 1 run が 1,270 個持つ実験があり, 全部を載せると日次で作り直す派生物が 20 MB になる. 全部は metrics.csv にあり, 画面は比べる数本だけを読む"
+          },
+          "n_metrics": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "その run が記録した run スコープ (step 無し) の指標の総数. metrics が 12 個しか無いことを画面が «12 / 1,270» と言えるようにするために要る"
           },
           "replication": {
             "type": [
@@ -258,6 +264,27 @@
           "repo_id": {
             "$ref": "common.json#/$defs/slug",
             "description": "どのリポジトリの run か. 集約先での置き場 (<集約先>/<repo_id>/…) を引くのに要る"
+          },
+          "sweep_id": {
+            "type": ["string", "null"],
+            "description": "その run が属する sweep. 親も点も同じ値を持つ. 40 点の sweep を 40 個の無関係な行にしないために要る (run.json の lineage.sweep_id)"
+          },
+          "parent_run_uid": {
+            "anyOf": [
+              { "$ref": "common.json#/$defs/run_uid" },
+              { "type": "null" }
+            ],
+            "description": "sweep の点なら親 run. 親自身と単発の run では null"
+          },
+          "config_hash": {
+            "type": ["string", "null"],
+            "pattern": "^[0-9a-f]{64}$",
+            "description": "条件のハッシュ. legacy run には無い"
+          },
+          "env_hash": {
+            "type": ["string", "null"],
+            "pattern": "^[0-9a-f]{64}$",
+            "description": "環境のハッシュ. 同じ config_hash で割れていれば «条件は同じなのに環境が違う» (warnings の env_split が指しているもの)"
           }
         }
       }

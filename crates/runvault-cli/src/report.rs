@@ -115,7 +115,7 @@ pub fn build(vault_root: &Path) -> Result<Value, String> {
     let targets_table = table(vault_root, "run_targets");
     let jira_table = table(vault_root, "run_jira");
 
-    let experiments = experiments(&connection, &runs_table, &metrics_table, &jira_table)?;
+    let (experiments, carried) = experiments(&connection, &runs_table, &metrics_table, &jira_table)?;
     let runs = runs(
         &connection,
         &runs_table,
@@ -123,12 +123,12 @@ pub fn build(vault_root: &Path) -> Result<Value, String> {
         &reference_table,
         &targets_table,
         &jira_table,
-        vocabulary.max_runs,
+        &carried,
     )?;
     let warnings = warnings(&connection, &runs_table)?;
 
     Ok(json!({
-        "schema_version": "1.1",
+        "schema_version": "1.3",
         "vocab_version": vocabulary.version,
         "generated_at": chrono::Local::now().to_rfc3339(),
         "freshness_hours": vocabulary.freshness_hours,
@@ -142,12 +142,14 @@ pub fn build(vault_root: &Path) -> Result<Value, String> {
 ///
 /// The counts come from the whole index rather than the capped `runs` list, so
 /// narrowing what the screen shows never changes what it says happened.
+type Carried = BTreeMap<(String, Option<String>), Vec<String>>;
+
 fn experiments(
     connection: &Connection,
     runs_table: &str,
     metrics_table: &str,
     jira_table: &str,
-) -> Result<Vec<Value>, String> {
+) -> Result<(Vec<Value>, Carried), String> {
     // `experiment` is grouped as it is, `NULL` included: a legacy run written
     // straight into `results/` never recorded which experiment it belonged to,
     // and putting it under the repository's name would be inventing one.
@@ -234,23 +236,49 @@ fn experiments(
          WHERE m.scope = 'run' GROUP BY 1, 2, 3 ORDER BY 1, 2, n DESC, m.name"
     );
     let mut primary: BTreeMap<(String, Option<String>), Vec<String>> = BTreeMap::new();
+    // The names `runs[].metrics` carries. A run is not asked to hand over every
+    // metric it recorded: one javitz1991 run holds 1,270 of them, and 298 such
+    // runs made the payload 15 MB on their own — for a file that is rewritten
+    // daily and kept in git. The full set stays in `metrics.csv`, which the
+    // screen reads for the handful of runs it was asked to compare.
+    let mut carried: Carried = BTreeMap::new();
+    let budget = runvault::vocabulary::get().summary_metrics as usize;
     each_row(connection, &sql, |row| {
         let Some(name) = text(&row[2]) else {
             return Ok(());
         };
-        // §5.4 ②: the run-scope metrics, most common first. The registry's own
-        // names are left out — see `is_reserved`.
-        if is_reserved(&name) || runvault::ids::validate_slug("metric", &name).is_err() {
+        if runvault::ids::validate_slug("metric", &name).is_err() {
             return Ok(());
         }
-        let entry = primary
-            .entry((text(&row[0]).unwrap_or_default(), text(&row[1])))
-            .or_default();
+        let key = (text(&row[0]).unwrap_or_default(), text(&row[1]));
+        // Carried by frequency, reserved names included: `n_units` says how big
+        // the run was, which a row on screen wants even though it is not what
+        // the experiment set out to measure.
+        let held = carried.entry(key.clone()).or_default();
+        if held.len() < budget {
+            held.push(name.clone());
+        }
+        // §5.4 ②: the headline metrics, most common first. The registry's own
+        // names are left out — see `is_reserved`.
+        if is_reserved(&name) {
+            return Ok(());
+        }
+        let entry = primary.entry(key).or_default();
         if entry.len() < 3 {
             entry.push(name);
         }
         Ok(())
     })?;
+    // The headline is always carried: a screen that shows `primary_metrics`
+    // must find them in the run it is showing.
+    for (key, names) in &primary {
+        let held = carried.entry(key.clone()).or_default();
+        for name in names {
+            if !held.contains(name) {
+                held.push(name.clone());
+            }
+        }
+    }
 
     for experiment in &mut out {
         let key = (
@@ -273,10 +301,19 @@ fn experiments(
             experiment["git_remote"] = json!(remote);
         }
     }
-    Ok(out)
+    Ok((out, carried))
 }
 
-/// The most recent runs, newest first, capped by the registry's `max_runs`.
+/// Every run in the index, newest first.
+///
+/// **Nothing is left out.** The list used to be capped — first at 200 overall,
+/// then at 120 per experiment — and both were the wrong lever. What made the
+/// payload heavy was never the number of runs but the metrics carried with
+/// them: 654 schelling runs weigh 0.5 MB, while 298 javitz1991 runs weighed
+/// 15 MB because each holds up to 1,270 metric names. Capping the runs hid data
+/// to save bytes that were not where the bytes were. Carrying only the
+/// experiment's headline metrics (see `carried`) leaves the whole index listed
+/// in a smaller file than the capped one was.
 fn runs(
     connection: &Connection,
     runs_table: &str,
@@ -284,13 +321,14 @@ fn runs(
     reference_table: &str,
     targets_table: &str,
     jira_table: &str,
-    max_runs: u64,
+    carried: &Carried,
 ) -> Result<Vec<Value>, String> {
     let sql = format!(
         "SELECT run_key, run_uid, run_slug, experiment, subcommand, state, created_at,
-                duration_sec, git_dirty, title, work_id, obsidian_note, repo_id
+                duration_sec, git_dirty, title, work_id, obsidian_note, repo_id,
+                sweep_id, parent_run_uid, config_hash, env_hash
          FROM {runs_table} WHERE created_at IS NOT NULL
-         ORDER BY created_at DESC LIMIT {max_runs}"
+         ORDER BY created_at DESC"
     );
     let mut runs: Vec<Value> = Vec::new();
     let mut keys: Vec<String> = Vec::new();
@@ -314,7 +352,23 @@ fn runs(
         entry.insert("created_at".into(), json!(created_at));
         entry.insert("duration_sec".into(), json!(number(&row[7])));
         entry.insert("git_dirty".into(), json!(flag(&row[8])));
+        // The sweep a run belongs to, and the run that started it. Both live in
+        // `run.json`, which the dashboard reads only for a run it was asked to
+        // open — without them here the 40 points of a sweep are 40 unrelated
+        // rows, and the parameter that moves between them cannot be found
+        // without opening all 40.
+        entry.insert("sweep_id".into(), json!(text(&row[13])));
+        entry.insert("parent_run_uid".into(), json!(text(&row[14])));
+        // The two hashes the screen compares side by side: same `config_hash`
+        // with a different `env_hash` is the `env_split` warning, and the
+        // warning had nowhere to send the reader without these.
+        entry.insert("config_hash".into(), json!(text(&row[15])));
+        entry.insert("env_hash".into(), json!(text(&row[16])));
         entry.insert("metrics".into(), json!({}));
+        // How many run-scope metrics the run actually recorded, so the screen
+        // can say that the summary holds 12 of 1,270 rather than imply that 12
+        // is all there was.
+        entry.insert("n_metrics".into(), json!(0));
         entry.insert("obsidian_note".into(), json!(text(&row[11])));
         entry.insert("jira".into(), json!([]));
         if let Some(title) = text(&row[9]) {
@@ -343,6 +397,11 @@ fn runs(
 
     // The run-scope aggregate, which is the number a table would carry. A point
     // on a series belongs to the series, not to the run.
+    //
+    // Only the experiment's carried names are written out; everything else is
+    // counted into `n_metrics` and left in `metrics.csv`. The count is taken
+    // here rather than from the index's own `n_metrics` column, which counts
+    // every metric row including the points of a series.
     let sql = format!(
         "SELECT run_key, name, value FROM {metrics_table}
          WHERE scope = 'run' AND step IS NULL AND run_key IN ({wanted})"
@@ -352,7 +411,19 @@ fn runs(
         else {
             return Ok(());
         };
-        if let Some(&i) = at.get(&key) {
+        let Some(&i) = at.get(&key) else {
+            return Ok(());
+        };
+        let total = runs[i]["n_metrics"].as_i64().unwrap_or(0) + 1;
+        runs[i]["n_metrics"] = json!(total);
+        let experiment_key = (
+            runs[i]["repo_id"].as_str().unwrap_or_default().to_string(),
+            runs[i]["experiment"].as_str().map(str::to_string),
+        );
+        let wanted_name = carried
+            .get(&experiment_key)
+            .is_some_and(|names| names.iter().any(|n| n == &name));
+        if wanted_name {
             runs[i]["metrics"][name] = json!(value);
         }
         Ok(())
@@ -517,4 +588,146 @@ fn warnings(connection: &Connection, runs_table: &str) -> Result<Vec<Value>, Str
     })?;
 
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn schema() -> &'static str {
+        "CREATE TABLE runs_t (
+           run_key TEXT, run_uid TEXT, run_slug TEXT, experiment TEXT,
+           subcommand TEXT, state TEXT, created_at TIMESTAMP,
+           duration_sec DOUBLE, git_dirty BOOLEAN, title TEXT, work_id TEXT,
+           obsidian_note TEXT, repo_id TEXT, sweep_id TEXT,
+           parent_run_uid TEXT, config_hash TEXT, env_hash TEXT
+         );
+         CREATE TABLE metrics_t (run_key TEXT, name TEXT, value DOUBLE, scope TEXT, step BIGINT, step_unit TEXT);
+         CREATE TABLE reference_t (run_key TEXT, name TEXT, value DOUBLE, scope TEXT, step BIGINT, step_unit TEXT);
+         CREATE TABLE targets_t (run_key TEXT, label TEXT, panel TEXT, \"row\" TEXT, condition TEXT, target_id TEXT);
+         CREATE TABLE jira_t (run_key TEXT, issue_key TEXT);"
+    }
+
+    /// A `runs` table standing in for the index.
+    fn index_with(connection: &Connection, rows: &[(&str, &str, i64)]) {
+        connection.execute_batch(schema()).unwrap();
+        for (key, experiment, minute) in rows {
+            connection
+                .execute(
+                    "INSERT INTO runs_t (run_key, run_uid, experiment, repo_id, created_at)
+                     VALUES (?, ?, ?, 'repo', TIMESTAMP '2026-09-01 00:00:00' + INTERVAL (?) MINUTE)",
+                    duckdb::params![key, key, experiment, minute],
+                )
+                .unwrap();
+        }
+    }
+
+    fn listed(connection: &Connection, carried: &Carried) -> Vec<Value> {
+        runs(
+            connection,
+            "runs_t",
+            "metrics_t",
+            "reference_t",
+            "targets_t",
+            "jira_t",
+            carried,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn every_run_is_listed_however_busy_the_experiment() {
+        // The list was capped twice — 200 overall, then 120 per experiment — and
+        // both hid runs to save bytes that were not in the runs.
+        let mut rows: Vec<(&str, &str, i64)> = Vec::new();
+        for key in ["b1", "b2", "b3", "b4", "b5"] {
+            rows.push((key, "busy", key.as_bytes()[1] as i64));
+        }
+        rows.push(("q1", "quiet", 1));
+        let connection = Connection::open_in_memory().unwrap();
+        index_with(&connection, &rows);
+        let got = listed(&connection, &Carried::new());
+        assert_eq!(got.len(), 6, "{got:?}");
+    }
+
+    #[test]
+    fn the_list_is_newest_first() {
+        let connection = Connection::open_in_memory().unwrap();
+        index_with(&connection, &[("old", "e", 1), ("new", "e", 3), ("mid", "e", 2)]);
+        let got = listed(&connection, &Carried::new());
+        let keys: Vec<&str> = got.iter().map(|r| r["run_key"].as_str().unwrap()).collect();
+        assert_eq!(keys, ["new", "mid", "old"]);
+    }
+
+    #[test]
+    fn a_run_carries_the_headline_metrics_and_counts_the_rest() {
+        // One javitz1991 run holds 1,270 metric names. Carrying them all made
+        // the payload 15 MB for that experiment alone, so the summary keeps the
+        // few the screen reads and says how many it is not showing.
+        let connection = Connection::open_in_memory().unwrap();
+        index_with(&connection, &[("r", "e", 1)]);
+        for name in ["kept", "also_kept", "dropped_a", "dropped_b"] {
+            connection
+                .execute(
+                    "INSERT INTO metrics_t (run_key, name, value, scope, step)
+                     VALUES ('r', ?, 1.0, 'run', NULL)",
+                    duckdb::params![name],
+                )
+                .unwrap();
+        }
+        let mut carried = Carried::new();
+        carried.insert(
+            ("repo".to_string(), Some("e".to_string())),
+            vec!["kept".to_string(), "also_kept".to_string()],
+        );
+        let got = listed(&connection, &carried);
+        let metrics = got[0]["metrics"].as_object().unwrap();
+        assert_eq!(metrics.len(), 2, "{metrics:?}");
+        assert!(metrics.contains_key("kept"));
+        // The count is of what the run recorded, not of what was carried:
+        // 2 of 4 is the thing the screen has to be able to say.
+        assert_eq!(got[0]["n_metrics"], json!(4));
+    }
+
+    #[test]
+    fn a_run_whose_experiment_carries_nothing_still_reports_its_count() {
+        // `experiment` is NULL for a legacy run left in `results/`, and such a
+        // group may have no headline at all. Reporting zero metrics with a zero
+        // count would say it recorded none, which is a different claim.
+        let connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch(schema()).unwrap();
+        connection
+            .execute(
+                "INSERT INTO runs_t (run_key, experiment, repo_id, created_at)
+                 VALUES ('l', NULL, 'repo', TIMESTAMP '2026-09-01 00:00:00')",
+                duckdb::params![],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO metrics_t (run_key, name, value, scope, step)
+                 VALUES ('l', 'something', 1.0, 'run', NULL)",
+                duckdb::params![],
+            )
+            .unwrap();
+        let got = listed(&connection, &Carried::new());
+        assert_eq!(got[0]["metrics"].as_object().unwrap().len(), 0);
+        assert_eq!(got[0]["n_metrics"], json!(1));
+    }
+
+    #[test]
+    fn a_series_point_is_not_counted_as_a_run_metric() {
+        // A point on a series belongs to the series. Counting them would make
+        // `n_metrics` say 10,000 for a run that recorded three numbers.
+        let connection = Connection::open_in_memory().unwrap();
+        index_with(&connection, &[("r", "e", 1)]);
+        connection
+            .execute_batch(
+                "INSERT INTO metrics_t (run_key, name, value, scope, step)
+                 VALUES ('r', 'x', 1.0, 'run', NULL), ('r', 'x', 2.0, 'run', 1), ('r', 'x', 3.0, 'run', 2);",
+            )
+            .unwrap();
+        let got = listed(&connection, &Carried::new());
+        assert_eq!(got[0]["n_metrics"], json!(1));
+    }
 }

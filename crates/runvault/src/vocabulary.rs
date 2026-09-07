@@ -37,8 +37,14 @@ pub struct Vocabulary {
     pub metric_names: BTreeMap<String, ReservedMetric>,
     /// Default freshness threshold for the dashboard report, in hours.
     pub freshness_hours: f64,
-    /// Default cap on the number of runs in the dashboard report.
-    pub max_runs: u64,
+    /// How many metric names `report --obsidian` carries per run.
+    ///
+    /// The report lists every run (1.4). What made it heavy was never the
+    /// number of runs but the metrics carried with them — 654 schelling runs
+    /// weigh 0.5 MB, 298 javitz1991 runs weighed 15 MB — so the summary holds
+    /// the experiment's most frequent names and leaves the rest in
+    /// `metrics.csv`, where the screen reads them for the runs it compares.
+    pub summary_metrics: u64,
     /// Retired metric names that became another name: old to new.
     ///
     /// The rows keep their place in `metrics`; only the name changes.
@@ -122,9 +128,9 @@ static VOCABULARY: LazyLock<Vocabulary> = LazyLock::new(|| {
         freshness_hours: report("freshness_hours")
             .and_then(|v| v.as_float())
             .unwrap_or(24.0),
-        max_runs: report("max_runs")
+        summary_metrics: report("summary_metrics")
             .and_then(|v| v.as_integer())
-            .unwrap_or(200) as u64,
+            .unwrap_or(12) as u64,
         renamed_metrics: mapping("renamed"),
         moved_metrics: mapping("moved"),
     }
@@ -216,7 +222,7 @@ mod tests {
     fn the_report_defaults_come_from_the_registry() {
         let v = get();
         assert!(v.freshness_hours > 0.0);
-        assert!(v.max_runs > 0);
+        assert!(v.summary_metrics > 0);
     }
 
     #[test]
@@ -251,7 +257,7 @@ mod tests {
             event_schemas: Vec::new(),
             metric_names: BTreeMap::new(),
             freshness_hours: 24.0,
-            max_runs: 200,
+            summary_metrics: 12,
             renamed_metrics: BTreeMap::from([("asr_old".into(), "asr".into())]),
             moved_metrics: BTreeMap::from([("elapsed".into(), "somewhere".into())]),
         };
@@ -273,7 +279,7 @@ mod tests {
             event_schemas: Vec::new(),
             metric_names: BTreeMap::new(),
             freshness_hours: 24.0,
-            max_runs: 200,
+            summary_metrics: 12,
             renamed_metrics: BTreeMap::from([("segregation".into(), "segregation_index".into())]),
             moved_metrics: BTreeMap::new(),
         };

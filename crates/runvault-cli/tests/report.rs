@@ -191,9 +191,39 @@ fn the_payload_matches_the_contract_the_dashboard_reads() {
     let report = payload(results.path(), vault.path());
 
     assert_valid(&report);
-    assert_eq!(report["schema_version"], json!("1.1"));
+    assert_eq!(report["schema_version"], json!("1.3"));
     assert!(report["vocab_version"].as_str().is_some());
     assert_eq!(report["freshness_hours"], json!(24.0));
+    // The list is not capped any more, so there is no rule to report.
+    assert!(report.get("run_limit").is_none(), "{report:?}");
+    // What a run recorded, next to what the summary is carrying.
+    assert!(report["runs"][0]["n_metrics"].as_i64().unwrap() >= 0);
+}
+
+#[test]
+fn a_run_carries_the_sweep_it_belongs_to_and_the_hashes_it_is_compared_by() {
+    let results = tempfile::tempdir().unwrap();
+    let vault = private_vault();
+    replication_run(results.path(), 42, 0.83);
+    let report = payload(results.path(), vault.path());
+    assert_valid(&report);
+
+    let runs = report["runs"].as_array().unwrap();
+    let run = &runs[0];
+    // Both hashes are what the dashboard puts side by side: same condition with
+    // a different environment is the `env_split` warning, and reading them from
+    // `run.json` meant opening every run to answer it.
+    assert!(
+        run["config_hash"].as_str().is_some_and(|v| v.len() == 64),
+        "{run:?}"
+    );
+    assert!(
+        run["env_hash"].as_str().is_some_and(|v| v.len() == 64),
+        "{run:?}"
+    );
+    // A run outside a sweep records neither, and says so rather than guessing.
+    assert!(run.get("sweep_id").is_some(), "{run:?}");
+    assert!(run.get("parent_run_uid").is_some(), "{run:?}");
 }
 
 #[test]
