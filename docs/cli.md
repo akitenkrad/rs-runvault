@@ -37,6 +37,7 @@ runvault report   Summarize the index for the Obsidian dashboard
 | `runvault query --vault V --refresh` | rebuild `index/*.parquet` from that repository |
 | `runvault query --vault V "SELECT …"` | ask a question across every repository at once |
 | `runvault report --obsidian --vault V -o runs.json` | summarize the index for the dashboard |
+| `runvault metrics audit --vault V` | how many metric names nothing describes |
 
 ## `path`
 
@@ -129,3 +130,25 @@ runvault report --vault <VAULT> --obsidian -o runs.json
 
 Summarizes the index. `--obsidian` writes the payload the dashboard reads;
 `-o`/`--out` says where to write it, defaulting to standard output.
+
+## `metrics audit`
+
+```bash
+runvault metrics audit --vault <VAULT>
+runvault metrics audit --vault <VAULT> --limit 0 --json
+```
+
+| Flag | Meaning |
+| --- | --- |
+| `--vault <VAULT>` | the aggregation repository whose index is counted |
+| `--json` | print the count as JSON instead of a report |
+| `--limit <LIMIT>` | how many undescribed names to print per experiment (default 20). `0` prints them all |
+
+Counts, per experiment, the metric names something describes and the names
+nothing does. Names covered by a declared family are folded into that family;
+what is left is printed by name and cut at `--limit`, which says how many of how
+many it is showing.
+
+It only ever prints — nothing is dropped and nothing is refused on the strength
+of a missing description. The index has to exist first (`runvault query
+--refresh`). See [metric meanings](metrics.md).

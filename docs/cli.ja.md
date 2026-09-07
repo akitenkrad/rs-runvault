@@ -36,6 +36,7 @@ runvault report   ダッシュボード用にインデックスを要約する
 | `runvault query --vault V --refresh` | そのリポジトリから `index/*.parquet` を再構築する |
 | `runvault query --vault V "SELECT …"` | 全リポジトリ横断で問い合わせる |
 | `runvault report --obsidian --vault V -o runs.json` | ダッシュボード用にインデックスを要約する |
+| `runvault metrics audit --vault V` | 何も説明していない指標名がどれだけあるか |
 
 ## `path`
 
@@ -114,3 +115,23 @@ runvault report --vault <VAULT> --obsidian -o runs.json
 ```
 
 インデックスを要約する．`--obsidian` はダッシュボードが読むペイロードを書き，`-o`/`--out` は出力先を指定する（既定は標準出力）．
+
+## `metrics audit`
+
+```bash
+runvault metrics audit --vault <VAULT>
+runvault metrics audit --vault <VAULT> --limit 0 --json
+```
+
+| フラグ | 意味 |
+| --- | --- |
+| `--vault <VAULT>` | インデックスを数える対象の集約リポジトリ |
+| `--json` | 報告文ではなく JSON で出す |
+| `--limit <LIMIT>` | 実験ごとに何件の «説明なし» を出すか（既定 20）．`0` で全件 |
+
+実験ごとに，説明のある指標名と無い指標名を数える．宣言された形に当たる名前はその形に
+畳み，残ったものは名前を出して `--limit` で打ち切る（打ち切ったときは «N 件のうち
+M 件を出しています» と書く）．
+
+出力するだけで，説明が無いことを理由に何かを落としたり拒んだりはしない．先に
+インデックスが要る（`runvault query --refresh`）．[指標の意味](metrics.ja.md) を参照．

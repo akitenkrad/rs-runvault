@@ -59,6 +59,7 @@ runvault --help
 | [Rust](docs/rust.md) | Recording a run from the library, and why there are two crates |
 | [Python](docs/python.md) | Recording a run, and reading one back, from Python |
 | [Command line](docs/cli.md) | Every subcommand and its flags |
+| [Metric meanings](docs/metrics.md) | Declaring what a metric measures, and counting what nobody declared |
 | [Preservation](docs/preservation.md) | `verify` → `sync` → `query` → `report` |
 | [Checks](docs/checks.md) | The invariants a run has to satisfy, and how to run them |
 | [Schemas](docs/schemas.md) | `schema/v1/`, the test vectors, and what CI enforces |

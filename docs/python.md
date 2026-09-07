@@ -137,6 +137,15 @@ shelling out to `runvault path --children-of`, so that reading a run needs
 nothing but the directory — analysis scripts run where the binary has not been
 built.
 
+## What the Python side does not write
+
+`runvault.toml` is not read here, and `metrics.meta.json` is not written. A run
+recorded from Python carries its numbers with no descriptions of them; the Rust
+implementation is the only one that copies a repository's declaration into a run.
+This is a gap in the second implementation rather than a difference in the
+specification — `schema/v1/metrics.declaration.json` fixes the shape for both.
+See [metric meanings](metrics.md).
+
 ## The Pydantic models
 
 `python/src/runvault/models/` is **generated** from `schema/v1/*.json` by

@@ -103,6 +103,14 @@ events  = read.events_table(run_dir)
 
 `sweep_summary_table` と `sweep_events_table` は，runvault がディスク上に持たない表を，子の `config.json` と `metrics.csv` から組み立てる．各行が自分の `run_dir` を持つので，呼び出し側が条件からディレクトリ名を composite する必要はない．`sweep_children` は `runvault path --children-of` を呼ばず自前で親の隣を走査する．run を読むのにディレクトリ以外を要らなくするためで，バイナリがビルドされていない環境でも解析スクリプトが動く．
 
+## Python 側が書かないもの
+
+`runvault.toml` はここでは読まれず，`metrics.meta.json` も書かれない．Python から
+記録した run は数値だけを持ち，その説明を持たない．リポジトリの宣言を run へ写すのは
+Rust 実装だけである．これは第 2 実装の欠けであって仕様の違いではない —— 形は
+`schema/v1/metrics.declaration.json` が両方に対して定めている．
+[指標の意味](metrics.ja.md) を参照．
+
 ## Pydantic モデル
 
 `python/src/runvault/models/` は `tools/gen_pydantic.py` により `schema/v1/*.json` から **生成** され，コミットされている．CI は再生成して差分が出れば失敗する．「生成できる」と「一致している」は別物だからである．スキーマを変えてから再生成する．逆順にはしない．

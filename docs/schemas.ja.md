@@ -18,7 +18,8 @@
 | `status.json` | `status.json` |
 | `sync.json` | 同期先の run ディレクトリに残る受領証 |
 | `vault.config.json` | 集約リポジトリの宣言 `runvault-vault.toml` |
-| `index.columns.json` | 7 つの parquet テーブルの平坦化された列定義 |
+| `metrics.declaration.json` | `runvault.toml` と，run へ写した `metrics.meta.json` |
+| `index.columns.json` | 8 つの parquet テーブルの平坦化された列定義 |
 | `index.columns.meta.json` | `index.columns.json` の形を保つメタスキーマ |
 | `runs.report.json` | `runvault report --obsidian` が書くダッシュボード用ペイロード |
 | `vocabulary.toml` | コア語彙．`vocab_version` で版管理される |

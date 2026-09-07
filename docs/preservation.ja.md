@@ -41,7 +41,7 @@ runvault query --vault <path> --refresh
 runvault query --vault <path> "SELECT … FROM 'index/runs.parquet'"
 ```
 
-`--refresh` は集約リポジトリを歩き，`index/` に 7 つの parquet テーブルを書く．列は `schema/v1/index.columns.json` が定義する：
+`--refresh` は集約リポジトリを歩き，`index/` に 8 つの parquet テーブルを書く．列は `schema/v1/index.columns.json` が定義する：
 
 | テーブル | 1 行が表すもの |
 | --- | --- |
@@ -52,6 +52,7 @@ runvault query --vault <path> "SELECT … FROM 'index/runs.parquet'"
 | `metrics` | 記録された数値 |
 | `reference` | 原論文の報告値 |
 | `manifest` | run が書いたファイル |
+| `metric_docs` | run が持つ，指標名またはその一族についての説明 |
 
 インデックスは派生物である．git 管理されておらず，削除しても走査のコストしか掛からない．列定義は転記ではなく `index.columns.json` から読まれるので，SQL の例には存在するのに writer には無い列，という事態は起こらない．
 

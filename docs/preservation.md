@@ -63,7 +63,7 @@ runvault query --vault <path> --refresh
 runvault query --vault <path> "SELECT … FROM 'index/runs.parquet'"
 ```
 
-`--refresh` walks the aggregation repository and writes seven parquet tables into
+`--refresh` walks the aggregation repository and writes eight parquet tables into
 `index/`, whose columns are defined by `schema/v1/index.columns.json`:
 
 | Table | One row per |
@@ -75,6 +75,7 @@ runvault query --vault <path> "SELECT … FROM 'index/runs.parquet'"
 | `metrics` | recorded number |
 | `reference` | reported value from the source publication |
 | `manifest` | file a run wrote |
+| `metric_docs` | description a run carries for a metric name, or for a family of them |
 
 The index is derived. It is not tracked by git, and deleting it costs nothing but
 the walk. The column definitions are read from `index.columns.json` rather than

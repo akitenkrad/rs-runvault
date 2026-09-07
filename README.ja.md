@@ -46,6 +46,7 @@ runvault --help
 | [Rust](docs/rust.ja.md) | ライブラリからの記録と，crate が 2 つある理由 |
 | [Python](docs/python.ja.md) | Python からの記録と読み出し |
 | [コマンドライン](docs/cli.ja.md) | 全サブコマンドとフラグ |
+| [指標の意味](docs/metrics.ja.md) | 指標が何を測っているかの宣言と，誰も宣言しなかった分を数える監査 |
 | [保全](docs/preservation.ja.md) | `verify` → `sync` → `query` → `report` |
 | [検査](docs/checks.ja.md) | run が満たすべき不変条件と，その実行方法 |
 | [スキーマ](docs/schemas.ja.md) | `schema/v1/`，テストベクタ，CI が守らせていること |

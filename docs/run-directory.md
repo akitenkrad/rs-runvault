@@ -14,6 +14,7 @@ it is authoritative.
 ├── events.jsonl      ← one line per observed unit
 ├── status.json       ← how the run ended, and when
 ├── manifest.csv      ← the identity of everything the run wrote
+├── metrics.meta.json ← what the metrics above measure, if the repository said
 ├── lock/             ← copies of the lock files that fixed the environment
 ├── logs/             ← the run's logs
 └── artifacts/        ← what the experiment wrote while it ran
@@ -75,6 +76,14 @@ cannot be terminal in name only.
 
 How the run ended, when it started and finished, and the counts. A run dropped
 without finishing records itself as failed.
+
+### `metrics.meta.json`
+
+What the numbers in `metrics.csv` mean — copied out of the repository's
+`runvault.toml` by `finish()`, and only the part that applies to the names this
+run recorded. It is absent when the repository declared nothing, or nothing it
+declared matched: a file saying only "nothing is documented" makes the same claim
+the absent file already makes. See [metric meanings](metrics.md).
 
 ### `manifest.csv`
 

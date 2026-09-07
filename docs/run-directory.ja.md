@@ -12,6 +12,7 @@
 ├── reference.csv     ← 原論文が報告している値．比較のため
 ├── events.jsonl      ← 観測単位ごとに 1 行
 ├── status.json       ← run がどう終わったか，いつ終わったか
+├── metrics.meta.json ← 上の指標が何を測っているか（リポジトリが宣言していれば）
 ├── manifest.csv      ← run が書いた全ファイルの同一性
 ├── lock/             ← 環境を固定した lock ファイルのコピー
 ├── logs/             ← run のログ
@@ -52,6 +53,14 @@ long 形式で，1 行 1 数値：`run_uid, step, step_unit, scope, name, value`
 ### `status.json`
 
 run がどう終わったか，いつ始まりいつ終わったか，そして各種カウント．finish されずに落ちた run は自らを失敗として記録する．
+
+### `metrics.meta.json`
+
+上の `metrics.csv` の数値が何を測っているか．リポジトリの `runvault.toml` から
+`finish()` が写したもので，写すのは **その run が記録した名前に当たる分だけ**である．
+リポジトリが何も宣言していないとき，または宣言したものが 1 つも当たらないときは
+存在しない — «何も説明されていない» と書いたファイルは，無いファイルと同じことしか
+言っていない．[指標の意味](metrics.ja.md) を参照．
 
 ### `manifest.csv`
 

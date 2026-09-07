@@ -72,6 +72,26 @@ written elsewhere in the run directory is not part of the record.
 directory afterwards is not in it, so a figure drawn later belongs beside the
 run rather than inside it.
 
+## Declaring what the metrics mean
+
+A metric name does not say what was measured. If the repository has a
+`runvault.toml`, `Run::start` reads it and `finish()` copies the part that
+applies to this run's names into `metrics.meta.json`:
+
+```toml
+[metrics."segregation_index"]
+meaning   = "how far the grid is from a mixed one"
+unit      = "ratio"
+direction = "down"
+range     = [0.0, 1.0]
+```
+
+It is read from the root passed to `RunOptions::repo_root`, or the git root when
+`origin = code`, and only once — at the start, so a file edited mid-run does not
+decide what that run measured. A repository without one still records runs. See
+[metric meanings](metrics.md) for families of generated names, and for the audit
+that counts what nobody declared.
+
 ## Progress
 
 A subcommand that can run for more than a minute reports what it is doing.
