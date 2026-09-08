@@ -246,6 +246,14 @@ schema_type! {
         pub sweep_id: Option<String>,
         /// The sweep's parent run. Only meaningful together with `sweep_id`.
         pub parent_run_uid: Option<String>,
+        /// Which point of the sweep's grid this is, counted from zero.
+        ///
+        /// Given by the caller. The loop belongs to the experiment, so a
+        /// number runvault worked out by counting the runs already on disk
+        /// would slide the moment two points run at once or one of them fails.
+        pub sweep_index: Option<u64>,
+        /// How many points the grid has — the 40 of "7 of 40".
+        pub sweep_total: Option<u64>,
         /// The interrupted run this one continues.
         pub resumed_from: Option<String>,
         /// The run whose records this one recomputed.
@@ -347,6 +355,14 @@ schema_type! {
         pub run_uid: String,
         /// Directory name. Readable, but not unique.
         pub run_slug: String,
+        /// What a person calls this run: "eps=0.15", "tau=1/3, the baseline".
+        ///
+        /// Not part of any hash. A name is not a condition, so two runs of the
+        /// same condition under different names have to stay the same
+        /// condition — and the directory name does not move either, because
+        /// where a run is kept is runvault's to decide.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub label: Option<String>,
         /// Stable id of the repository, given by the experiment.
         pub repo_id: String,
         /// The experiment this run belongs to.

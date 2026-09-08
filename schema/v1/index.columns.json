@@ -25,6 +25,12 @@
           "nullable": true
         },
         {
+          "name": "label",
+          "type": "string",
+          "nullable": true,
+          "note": "人が付けた名前. ハッシュにも run ディレクトリ名にも入らない"
+        },
+        {
           "name": "schema_version",
           "type": "string",
           "nullable": true,
@@ -170,6 +176,18 @@
           "name": "parent_run_uid",
           "type": "string",
           "nullable": true
+        },
+        {
+          "name": "sweep_index",
+          "type": "bigint",
+          "nullable": true,
+          "note": "sweep のグリッド上の位置 (0 始まり). 呼び出し側が渡したものだけ"
+        },
+        {
+          "name": "sweep_total",
+          "type": "bigint",
+          "nullable": true,
+          "note": "そのグリッドの点の総数"
         },
         {
           "name": "resumed_from",

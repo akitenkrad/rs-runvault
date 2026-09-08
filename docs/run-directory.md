@@ -33,7 +33,13 @@ The metadata. It carries `run_uid`, `run_slug`, `repo_id`, `experiment`,
 and the blocks `code`, `env`, `rng`, `llm`, `data`, `lineage`, `research` and
 `ext`. `schema/v1/run.json` is the specification.
 
-Two fields deserve a note. `data` is the datasets the run used, and an empty
+`label` is what a person called the run — "tau=1/3, the baseline". It is
+optional, absent on every run recorded before it existed, and part of no hash:
+two runs of one condition under two names are still one condition. It does not
+reach the directory name either. `lineage.sweep_index` / `sweep_total` say which
+point of a sweep's grid this is, counted from zero.
+
+Two more fields deserve a note. `data` is the datasets the run used, and an empty
 array means "none" — it is distinguished from "not recorded", which is why every
 entry needs one of `hash` / `dataset_id` / `uri`. And `research` is what ties a
 run to the work it reproduces: the publication, and the specific table or figure

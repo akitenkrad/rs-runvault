@@ -18,7 +18,7 @@
   "properties": {
     "schema_version": {
       "type": "string",
-      "const": "1.4"
+      "const": "1.5"
     },
     "vocab_version": {
       "type": "string",
@@ -255,6 +255,13 @@
               }
             ]
           },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "人が付けた run の名前. これが無い run は run_slug の末尾で見分ける — 既存の run はどれも持たない"
+          },
           "experiment": {
             "anyOf": [
               {
@@ -389,6 +396,22 @@
               }
             ],
             "description": "sweep の点なら親 run. 親自身と単発の run では null"
+          },
+          "sweep_index": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0,
+            "description": "sweep のグリッド上の位置 (0 始まり). «7/40» の 7 は index+1"
+          },
+          "sweep_total": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1,
+            "description": "そのグリッドの点の総数"
           },
           "config_hash": {
             "type": [

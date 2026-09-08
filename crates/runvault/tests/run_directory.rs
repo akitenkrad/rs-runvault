@@ -812,10 +812,8 @@ fn resuming_a_run_whose_status_cannot_be_read_is_refused() {
     first.fail("crash", "died mid-run").unwrap();
 
     let second = Run::start(options().lineage(runvault::Lineage {
-        sweep_id: None,
-        parent_run_uid: None,
         resumed_from: Some(first_uid),
-        derived_from: None,
+        ..Default::default()
     }))
     .unwrap();
     let second_dir = second.dir().to_path_buf();
@@ -1129,4 +1127,148 @@ fn a_stage_left_open_past_the_end_does_not_break_the_record() {
         sealed
     );
     runvault::verify::deep(&dir).unwrap();
+}
+
+// ---------------------------------------------------------------------------
+// What a person calls a run, and where it sits in a sweep (MYTASK-3232)
+// ---------------------------------------------------------------------------
+
+/// The options every test below starts from: one condition, nothing named.
+fn plain_options(results: &std::path::Path) -> RunOptions {
+    RunOptions::new("e", "run")
+        .repo_id("r")
+        .domain("other")
+        .origin(Origin::Manual)
+        .results_root(results)
+        .parameters(&json!({"eps": 0.15}))
+        .unwrap()
+}
+
+#[test]
+fn a_run_carries_the_name_a_person_gave_it() {
+    let results = tempfile::tempdir().unwrap();
+    let run = Run::start(plain_options(results.path()).label("ε=0.15 の基準条件")).unwrap();
+    let dir = run.dir().to_path_buf();
+    run.finish().unwrap();
+
+    let meta: serde_json::Value = read_json(&dir.join("run.json"));
+    assert_eq!(meta["label"], json!("ε=0.15 の基準条件"));
+}
+
+#[test]
+fn a_run_with_no_name_says_so_by_having_none() {
+    // 既存の 1,222 run はどれも名前を持たない．空文字を書くと «名前が無い» と
+    // «名前が空» が同じ顔になる．
+    let results = tempfile::tempdir().unwrap();
+    let run = Run::start(plain_options(results.path())).unwrap();
+    let dir = run.dir().to_path_buf();
+    run.finish().unwrap();
+
+    let meta: serde_json::Value = read_json(&dir.join("run.json"));
+    assert!(meta.get("label").is_none_or(Value::is_null), "{meta}");
+}
+
+#[test]
+fn the_name_changes_no_hash_and_no_directory() {
+    // これがこの機能の一番の不変条件である．名前は条件ではないので，同じ条件に
+    // 別の名前を付けた 2 本は «同じ条件の 2 本» でなければならない．
+    let results = tempfile::tempdir().unwrap();
+    let unnamed = Run::start(plain_options(results.path())).unwrap();
+    let (a_dir, a_cfg, a_exec) = (
+        unnamed.dir().to_path_buf(),
+        unnamed.meta().config_hash.clone(),
+        unnamed.meta().execution_hash.clone(),
+    );
+    unnamed.finish().unwrap();
+
+    let named =
+        Run::start(plain_options(results.path()).label("同じ条件に名前を付けただけ")).unwrap();
+    let (b_cfg, b_exec, b_slug) = (
+        named.meta().config_hash.clone(),
+        named.meta().execution_hash.clone(),
+        named.meta().run_slug.clone(),
+    );
+    named.finish().unwrap();
+
+    assert_eq!(a_cfg, b_cfg, "名前で条件ハッシュが動いてはいけない");
+    assert_eq!(a_exec, b_exec, "名前で実行ハッシュが動いてはいけない");
+    // ディレクトリ名にも入らない — 置き場を決めるのは runvault である．
+    assert!(!b_slug.contains("名前"), "{b_slug}");
+    let a_slug = a_dir.file_name().unwrap().to_string_lossy().to_string();
+    assert_eq!(
+        runvault::ids::slug_hash_prefixes(&a_slug),
+        runvault::ids::slug_hash_prefixes(&b_slug),
+        "同じ条件なので slug のハッシュ部分も同じはず"
+    );
+}
+
+#[test]
+fn a_sweep_point_records_where_it_sits_in_the_grid() {
+    let results = tempfile::tempdir().unwrap();
+    let parent = Run::start(
+        RunOptions::new("e", "sweep")
+            .repo_id("r")
+            .domain("other")
+            .origin(Origin::Manual)
+            .results_root(results.path())
+            .parameters(&json!({"grid": "eps"}))
+            .unwrap()
+            .sweep_parent(),
+    )
+    .unwrap();
+    let sweep_id = parent.sweep_id().unwrap().to_string();
+    let parent_uid = parent.meta().run_uid.clone();
+    parent.finish().unwrap();
+
+    let child = Run::start(
+        plain_options(results.path())
+            .label("ε=0.15")
+            .sweep_point(6, 40)
+            .lineage(runvault::Lineage {
+                sweep_id: Some(sweep_id),
+                parent_run_uid: Some(parent_uid),
+                ..Default::default()
+            }),
+    )
+    .unwrap();
+    let dir = child.dir().to_path_buf();
+    child.finish().unwrap();
+
+    let meta: serde_json::Value = read_json(&dir.join("run.json"));
+    assert_eq!(meta["lineage"]["sweep_index"], json!(6));
+    assert_eq!(meta["lineage"]["sweep_total"], json!(40));
+    // 画面は «7/40» と出す．記録は 0 始まりで，+1 するのは読ませる側の仕事．
+    assert_eq!(meta["label"], json!("ε=0.15"));
+}
+
+#[test]
+fn a_point_outside_a_sweep_is_refused() {
+    // sweep に属していない run に «何番目» は無い．
+    let results = tempfile::tempdir().unwrap();
+    let err = Run::start(plain_options(results.path()).sweep_point(0, 4))
+        .err()
+        .map(|e| e.to_string())
+        .expect("refused");
+    assert!(err.contains("sweep_id"), "{err}");
+}
+
+#[test]
+fn a_point_outside_its_own_grid_is_refused() {
+    let results = tempfile::tempdir().unwrap();
+    let with_sweep = |index, total| {
+        plain_options(results.path())
+            .sweep_point(index, total)
+            .lineage(runvault::Lineage {
+                sweep_id: Some("s1".into()),
+                ..Default::default()
+            })
+    };
+    // 0 始まりなので 40 点のグリッドの最後は 39．
+    let err = Run::start(with_sweep(40, 40))
+        .err()
+        .map(|e| e.to_string())
+        .expect("refused");
+    assert!(err.contains("40"), "{err}");
+    assert!(Run::start(with_sweep(0, 0)).is_err(), "点が 0 個のグリッド");
+    Run::start(with_sweep(39, 40)).expect("最後の点は通る");
 }

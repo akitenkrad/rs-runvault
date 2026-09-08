@@ -44,6 +44,14 @@
     "run_slug": {
       "$ref": "common.json#/$defs/run_slug"
     },
+    "label": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 80,
+      "description": "人が付けた短い名前 («ε=0.15» «τ=1/3 基準条件» など). 任意. ハッシュには入らない — 名前は条件ではないので, 同じ条件に別の名前を 付けた 2 本が «別の条件» になってはいけない. run ディレクトリ名も 変えない (置き場を決めるのは runvault で, 名前は記録と画面のためのもの)"
+    },
     "repo_id": {
       "$ref": "common.json#/$defs/slug"
     },
@@ -471,6 +479,22 @@
               "type": "null"
             }
           ]
+        },
+        "sweep_index": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "sweep のグリッド上で何番目の点か (0 始まり). 呼び出し側が渡す — ループを回すのは実装側なので, 既存 run を数えて推測すると並列実行と失敗で 番号がずれる. 渡されなければ null"
+        },
+        "sweep_total": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "description": "そのグリッドの点の総数. «7/40» の 40"
         }
       },
       "allOf": [
@@ -506,6 +530,23 @@
             }
           },
           "$comment": "親を指すなら sweep_id は非 null で必須. null では sweep に属していない"
+        },
+        "sweep_index": {
+          "required": [
+            "sweep_id"
+          ],
+          "properties": {
+            "sweep_id": {
+              "$ref": "common.json#/$defs/slug"
+            }
+          },
+          "$comment": "番号を持つなら sweep に属していなければならない. sweep の外に «何番目» は無い"
+        },
+        "sweep_total": {
+          "required": [
+            "sweep_index"
+          ],
+          "$comment": "総数だけあって番号が無い状態は «何番目» を答えない"
         }
       }
     },

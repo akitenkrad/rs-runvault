@@ -141,6 +141,32 @@ afterwards is a line the manifest disagrees with — so a stage left open past t
 end of its run keeps reporting to standard error, says so once, and stops writing
 into the directory.
 
+## Naming a run
+
+A directory name says when a run happened and which condition it was, and
+nothing about what the condition was *for*. `label` is that:
+
+```rust
+RunOptions::new("schelling", "sweep-point")
+    .label(format!("tau={tau}"))
+    .sweep_point(i, grid.len())
+```
+
+`label` changes no hash and no path — two runs of one condition under two names
+are still one condition, and the directory keeps the name runvault gave it.
+`sweep_point` records which point of the grid this is (counted from zero) and
+how many there are, so the screen can say "7 of 40".
+
+The caller passes the index because the caller owns the loop. A number runvault
+worked out by counting the runs already on disk would look equivalent and is
+not: two points running at once would take the same number, and a point that
+failed would shift every number after it. A run with a point has to belong to a
+sweep — outside one there is no grid to be the seventh of.
+
+Say what the condition *is*, not where it sits in the loop. `sweep_index`
+already records the position, and a label repeating it has to be corrected
+every time the grid changes.
+
 ## Sweeps
 
 A sweep parent is driven by a list of seeds rather than one, so it is declared

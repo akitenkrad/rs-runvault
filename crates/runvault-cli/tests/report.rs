@@ -191,7 +191,7 @@ fn the_payload_matches_the_contract_the_dashboard_reads() {
     let report = payload(results.path(), vault.path());
 
     assert_valid(&report);
-    assert_eq!(report["schema_version"], json!("1.4"));
+    assert_eq!(report["schema_version"], json!("1.5"));
     assert!(report["vocab_version"].as_str().is_some());
     assert_eq!(report["freshness_hours"], json!(24.0));
     // The list is not capped any more, so there is no rule to report.
@@ -571,4 +571,96 @@ fn an_experiment_that_declared_nothing_says_so_with_an_empty_pair() {
     let docs = &experiment_named(&report, "schelling")["metric_docs"];
     assert_eq!(docs["names"], json!({}), "{docs}");
     assert_eq!(docs["patterns"], json!([]), "{docs}");
+}
+
+/// A sweep of two points, each named and numbered (MYTASK-3232).
+fn named_sweep(results: &Path) {
+    let parent = Run::start(
+        RunOptions::new("schelling", "sweep")
+            .repo_id(REPO_ID)
+            .domain("simulation")
+            .origin(Origin::Manual)
+            .visibility(Visibility::Public)
+            .results_root(results)
+            .parameters(&json!({"grid": "threshold"}))
+            .unwrap()
+            .label("τ を 2 点振る")
+            .sweep_parent(),
+    )
+    .unwrap();
+    let sweep_id = parent.sweep_id().unwrap().to_string();
+    let parent_uid = parent.meta().run_uid.clone();
+    parent.finish().unwrap();
+
+    for (i, tau) in [0.33, 0.5].iter().enumerate() {
+        let mut child = Run::start(
+            RunOptions::new("schelling", "sweep-point")
+                .repo_id(REPO_ID)
+                .domain("simulation")
+                .origin(Origin::Manual)
+                .visibility(Visibility::Public)
+                .results_root(results)
+                .parameters(&json!({"threshold": tau, "seed": 1}))
+                .unwrap()
+                .seed_pointers(["/seed"])
+                .master_seed(1)
+                .label(format!("τ={tau}"))
+                .sweep_point(i as u64, 2)
+                .lineage(runvault::Lineage {
+                    sweep_id: Some(sweep_id.clone()),
+                    parent_run_uid: Some(parent_uid.clone()),
+                    ..Default::default()
+                }),
+        )
+        .unwrap();
+        child
+            .log_metric("segregation_index", 0.7 + i as f64)
+            .send()
+            .unwrap();
+        child.finish().unwrap();
+    }
+}
+
+#[test]
+fn a_run_carries_the_name_it_was_given_and_its_place_in_the_sweep() {
+    let results = tempfile::tempdir().unwrap();
+    let vault = private_vault();
+    named_sweep(results.path());
+    let report = payload(results.path(), vault.path());
+    assert_valid(&report);
+
+    let runs = report["runs"].as_array().unwrap();
+    let point = runs
+        .iter()
+        .find(|r| r["label"] == json!("τ=0.5"))
+        .unwrap_or_else(|| panic!("名前で引けません: {report}"));
+    assert_eq!(point["sweep_index"], json!(1));
+    assert_eq!(point["sweep_total"], json!(2));
+    // 画面は «2/2» と出す．記録は 0 始まりで，+1 は読ませる側の仕事．
+    assert!(point["sweep_id"].as_str().is_some());
+
+    let parent = runs
+        .iter()
+        .find(|r| r["subcommand"] == json!("sweep"))
+        .expect("親");
+    assert_eq!(parent["label"], json!("τ を 2 点振る"));
+    // 親はグリッドの点ではないので番号を持たない．
+    assert_eq!(parent["sweep_index"], json!(null));
+}
+
+#[test]
+fn a_run_with_no_name_carries_null_rather_than_an_empty_one() {
+    // 既存の 1,222 run はどれも名前を持たない．画面はこれを «読み込み中» と
+    // 取り違えてはいけないので，鍵はあって値が null という形にする．
+    let results = tempfile::tempdir().unwrap();
+    let vault = private_vault();
+    replication_run(results.path(), 42, 0.83);
+    let report = payload(results.path(), vault.path());
+    assert_valid(&report);
+
+    let run = &report["runs"][0];
+    assert!(run.as_object().unwrap().contains_key("label"), "{run}");
+    assert_eq!(run["label"], json!(null));
+    assert_eq!(run["sweep_index"], json!(null));
+    assert_eq!(run["sweep_total"], json!(null));
 }

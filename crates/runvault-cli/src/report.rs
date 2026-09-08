@@ -135,7 +135,7 @@ pub fn build(vault_root: &Path) -> Result<Value, String> {
     let warnings = warnings(&connection, &runs_table)?;
 
     Ok(json!({
-        "schema_version": "1.4",
+        "schema_version": "1.5",
         "vocab_version": vocabulary.version,
         "generated_at": chrono::Local::now().to_rfc3339(),
         "freshness_hours": vocabulary.freshness_hours,
@@ -428,7 +428,8 @@ fn runs(
     let sql = format!(
         "SELECT run_key, run_uid, run_slug, experiment, subcommand, state, created_at,
                 duration_sec, git_dirty, title, work_id, obsidian_note, repo_id,
-                sweep_id, parent_run_uid, config_hash, env_hash
+                sweep_id, parent_run_uid, config_hash, env_hash,
+                label, sweep_index, sweep_total
          FROM {runs_table} WHERE created_at IS NOT NULL
          ORDER BY created_at DESC"
     );
@@ -448,6 +449,10 @@ fn runs(
         entry.insert("repo_id".into(), json!(text(&row[12])));
         entry.insert("run_uid".into(), json!(text(&row[1])));
         entry.insert("run_slug".into(), json!(text(&row[2])));
+        // What a person called this run, and where it sits in its sweep. Absent
+        // on every run recorded before they existed, which is why the screen
+        // still has to be able to tell runs apart without them.
+        entry.insert("label".into(), json!(text(&row[17])));
         entry.insert("experiment".into(), json!(text(&row[3])));
         entry.insert("subcommand".into(), json!(text(&row[4])));
         entry.insert("state".into(), json!(text(&row[5])));
@@ -461,6 +466,8 @@ fn runs(
         // without opening all 40.
         entry.insert("sweep_id".into(), json!(text(&row[13])));
         entry.insert("parent_run_uid".into(), json!(text(&row[14])));
+        entry.insert("sweep_index".into(), json!(integer(&row[18])));
+        entry.insert("sweep_total".into(), json!(integer(&row[19])));
         // The two hashes the screen compares side by side: same `config_hash`
         // with a different `env_hash` is the `env_split` warning, and the
         // warning had nowhere to send the reader without these.
@@ -702,7 +709,8 @@ mod tests {
            subcommand TEXT, state TEXT, created_at TIMESTAMP,
            duration_sec DOUBLE, git_dirty BOOLEAN, title TEXT, work_id TEXT,
            obsidian_note TEXT, repo_id TEXT, sweep_id TEXT,
-           parent_run_uid TEXT, config_hash TEXT, env_hash TEXT
+           parent_run_uid TEXT, config_hash TEXT, env_hash TEXT,
+           label TEXT, sweep_index BIGINT, sweep_total BIGINT
          );
          CREATE TABLE metrics_t (run_key TEXT, name TEXT, value DOUBLE, scope TEXT, step BIGINT, step_unit TEXT);
          CREATE TABLE reference_t (run_key TEXT, name TEXT, value DOUBLE, scope TEXT, step BIGINT, step_unit TEXT);

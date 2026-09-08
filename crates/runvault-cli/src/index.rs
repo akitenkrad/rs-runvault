@@ -322,6 +322,7 @@ fn flatten_canonical(
     run.insert("run_key", Cell::Text(key.clone()));
     run.insert("run_uid", Cell::Text(meta.run_uid.clone()));
     run.insert("run_slug", Cell::Text(meta.run_slug.clone()));
+    run.insert("label", Cell::text(meta.label.as_deref()));
     run.insert("schema_version", Cell::Text(meta.schema_version.clone()));
     run.insert("vocab_version", Cell::Text(meta.vocab_version.clone()));
     run.insert("repo_id", Cell::Text(meta.repo_id.clone()));
@@ -395,6 +396,14 @@ fn flatten_canonical(
     run.insert(
         "parent_run_uid",
         Cell::text(lineage.and_then(|l| l.parent_run_uid.as_deref())),
+    );
+    run.insert(
+        "sweep_index",
+        Cell::int(lineage.and_then(|l| l.sweep_index).map(|n| n as i64)),
+    );
+    run.insert(
+        "sweep_total",
+        Cell::int(lineage.and_then(|l| l.sweep_total).map(|n| n as i64)),
     );
     run.insert(
         "resumed_from",
@@ -796,8 +805,9 @@ fn results_root_of(dir: &Path, receipt: &SyncReceipt) -> PathBuf {
 }
 
 /// Columns a legacy run leaves empty, listed so none is forgotten.
-const ALL_RUN_COLUMNS_NULL_FOR_LEGACY: [&str; 45] = [
+const ALL_RUN_COLUMNS_NULL_FOR_LEGACY: [&str; 48] = [
     "run_slug",
+    "label",
     "schema_version",
     "vocab_version",
     "domain",
@@ -823,6 +833,8 @@ const ALL_RUN_COLUMNS_NULL_FOR_LEGACY: [&str; 45] = [
     "llm_model_snapshot",
     "sweep_id",
     "parent_run_uid",
+    "sweep_index",
+    "sweep_total",
     "resumed_from",
     "derived_from",
     "work_id",

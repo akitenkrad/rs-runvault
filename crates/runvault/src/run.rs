@@ -65,6 +65,8 @@ pub struct RunOptions {
     llm: Option<Llm>,
     lineage: Option<Lineage>,
     sweep_parent: bool,
+    label: Option<String>,
+    sweep_point: Option<(u64, u64)>,
     research: Research,
     ext: Option<Map<String, Value>>,
     cli_args: Option<Vec<String>>,
@@ -92,6 +94,8 @@ impl RunOptions {
             llm: None,
             lineage: None,
             sweep_parent: false,
+            label: None,
+            sweep_point: None,
             research: Research::default(),
             ext: None,
             cli_args: None,
@@ -253,6 +257,42 @@ impl RunOptions {
         self
     }
 
+    /// What to call this run: `"eps=0.15"`, `"tau=1/3, the baseline"`.
+    ///
+    /// A directory name says when a run happened and which condition it was,
+    /// and nothing about what the condition *was for*. The label is that, and
+    /// it is the only field here a person writes for another person.
+    ///
+    /// It changes no hash and no path. Two runs of one condition under two
+    /// names are still one condition, and the directory keeps the name
+    /// `runvault` gave it — a label is for the record and the screen, not for
+    /// deciding where a run is kept.
+    ///
+    /// Say what the condition *is*, not where it sits in a loop: the position
+    /// is [`sweep_point`](Self::sweep_point)'s to record, and a label that
+    /// repeats it has to be corrected whenever the grid changes.
+    pub fn label(mut self, label: impl Into<String>) -> Self {
+        self.label = Some(label.into());
+        self
+    }
+
+    /// Which point of a sweep's grid this run is, and how many there are.
+    ///
+    /// `index` counts from zero, so the last point of a grid of 40 is
+    /// `sweep_point(39, 40)`.
+    ///
+    /// The caller passes it because the caller owns the loop. Counting the
+    /// runs already on disk would look equivalent and is not: two points
+    /// running at once would take the same number, and a point that failed
+    /// would shift every number after it.
+    ///
+    /// A run with a point has to belong to a sweep — outside one there is no
+    /// grid to be the seventh of.
+    pub fn sweep_point(mut self, index: u64, total: u64) -> Self {
+        self.sweep_point = Some((index, total));
+        self
+    }
+
     /// The paper and targets this run reproduces.
     pub fn replication(mut self, replication: impl Into<Replication>) -> Self {
         self.research = replication.into().into();
@@ -348,6 +388,28 @@ impl RunOptions {
         }
 
         verify::check_research(&self.research)?;
+        if let Some((index, total)) = self.sweep_point {
+            // `check_lineage_shape` sees the lineage the caller passed, and the
+            // point is merged into it later — so the rule that a point belongs
+            // to a sweep has to be checked here, where both are in hand.
+            let in_a_sweep =
+                self.sweep_parent || self.lineage.as_ref().is_some_and(|l| l.sweep_id.is_some());
+            if !in_a_sweep {
+                return Err(Error::spec(
+                    "sweep_point を使うなら lineage.sweep_id が要ります (sweep の外に «何番目» はありません)",
+                ));
+            }
+            if total == 0 {
+                return Err(Error::spec(
+                    "sweep_point の total は 1 以上です (点が 0 個のグリッドに «何番目» は無い)",
+                ));
+            }
+            if index >= total {
+                return Err(Error::spec(format!(
+                    "sweep_point の index {index} が total {total} に収まっていません (index は 0 始まりです)"
+                )));
+            }
+        }
         verify::check_lineage_shape(self.lineage.as_ref())?;
         Ok((repo_id, domain))
     }
@@ -454,6 +516,7 @@ impl Run {
             runvault_version: crate::env::runvault_version().into(),
             run_uid: run_uid.clone(),
             run_slug: run_slug.clone(),
+            label: options.label.clone(),
             repo_id,
             experiment: options.experiment.clone(),
             subcommand: options.subcommand.clone(),
@@ -1078,13 +1141,19 @@ fn record_failed_start(
     let _ = files::write_json_atomically(&dir.join("status.json"), &status);
 }
 
-/// The lineage as written, with the sweep parent's own id filled in.
+/// The lineage as written, with the sweep parent's own id and the point filled in.
 fn lineage_of(options: &RunOptions, run_slug: &str) -> Option<Lineage> {
-    if !options.sweep_parent {
+    if !options.sweep_parent && options.sweep_point.is_none() {
         return options.lineage.clone();
     }
     let mut lineage = options.lineage.clone().unwrap_or_default();
-    lineage.sweep_id = Some(run_slug.to_string());
+    if options.sweep_parent {
+        lineage.sweep_id = Some(run_slug.to_string());
+    }
+    if let Some((index, total)) = options.sweep_point {
+        lineage.sweep_index = Some(index);
+        lineage.sweep_total = Some(total);
+    }
     Some(lineage)
 }
 

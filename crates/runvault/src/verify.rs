@@ -444,6 +444,23 @@ pub fn check_lineage_shape(lineage: Option<&Lineage>) -> Result<()> {
             "parent_run_uid を持つなら sweep_id も必要です (親だけ指して sweep に属さない状態は作らない)",
         ));
     }
+    if lineage.sweep_index.is_some() && lineage.sweep_id.is_none() {
+        return Err(Error::spec(
+            "sweep_index を持つなら sweep_id も必要です (sweep の外に «何番目» はありません)",
+        ));
+    }
+    if lineage.sweep_total.is_some() && lineage.sweep_index.is_none() {
+        return Err(Error::spec(
+            "sweep_total だけでは «何番目» を答えられません (sweep_index も必要です)",
+        ));
+    }
+    if let (Some(index), Some(total)) = (lineage.sweep_index, lineage.sweep_total)
+        && index >= total
+    {
+        return Err(Error::spec(format!(
+            "sweep_index {index} が sweep_total {total} に収まっていません (index は 0 始まりです)"
+        )));
+    }
     if lineage.resumed_from.is_some() && lineage.derived_from.is_some() {
         return Err(Error::spec(
             "resumed_from と derived_from は同時に立てられません (続きなのか作り直しなのかが決まらなくなります)",
@@ -974,10 +991,8 @@ mod tests {
     #[test]
     fn a_parent_without_a_sweep_fails() {
         let lineage = Lineage {
-            sweep_id: None,
             parent_run_uid: Some("01K3QZ8F7H9M2N4P6R8T0V2X4Z".into()),
-            resumed_from: None,
-            derived_from: None,
+            ..Default::default()
         };
         assert!(check_lineage_shape(Some(&lineage)).is_err());
     }
@@ -985,10 +1000,9 @@ mod tests {
     #[test]
     fn resuming_and_deriving_at_once_fails() {
         let lineage = Lineage {
-            sweep_id: None,
-            parent_run_uid: None,
             resumed_from: Some("01K3QZ8F7H9M2N4P6R8T0V2X4Z".into()),
             derived_from: Some("01K3QZ8F7H9M2N4P6R8T0V2X50".into()),
+            ..Default::default()
         };
         assert!(check_lineage_shape(Some(&lineage)).is_err());
     }
@@ -998,9 +1012,43 @@ mod tests {
         let lineage = Lineage {
             sweep_id: Some("sweep-2026-08-30".into()),
             parent_run_uid: Some("01K3QZ8F7H9M2N4P6R8T0V2X4Z".into()),
-            resumed_from: None,
-            derived_from: None,
+            ..Default::default()
         };
         check_lineage_shape(Some(&lineage)).unwrap();
+    }
+
+    #[test]
+    fn a_point_without_a_sweep_fails() {
+        // sweep の外に «何番目» は無い．
+        let lineage = Lineage {
+            sweep_index: Some(3),
+            sweep_total: Some(40),
+            ..Default::default()
+        };
+        assert!(check_lineage_shape(Some(&lineage)).is_err());
+    }
+
+    #[test]
+    fn a_total_without_an_index_fails() {
+        // 総数だけでは «何番目» を答えない．
+        let lineage = Lineage {
+            sweep_id: Some("s1".into()),
+            sweep_total: Some(40),
+            ..Default::default()
+        };
+        assert!(check_lineage_shape(Some(&lineage)).is_err());
+    }
+
+    #[test]
+    fn a_point_outside_its_grid_fails() {
+        let at = |index, total| Lineage {
+            sweep_id: Some("s1".into()),
+            sweep_index: Some(index),
+            sweep_total: Some(total),
+            ..Default::default()
+        };
+        // 0 始まりなので 40 点の最後は 39．
+        assert!(check_lineage_shape(Some(&at(40, 40))).is_err());
+        check_lineage_shape(Some(&at(39, 40))).unwrap();
     }
 }
