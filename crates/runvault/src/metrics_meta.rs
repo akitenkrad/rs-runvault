@@ -164,8 +164,18 @@ pub struct ParameterDoc {
 }
 
 /// A repository's declaration, as read from `runvault.toml`.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Declaration {
+    /// Whether every metric this repository records has to be described.
+    ///
+    /// True unless the file says otherwise. A description is not worth much if
+    /// it is written for the metrics somebody remembered and skipped for the
+    /// rest: the ones that go undescribed are exactly the ones nobody could
+    /// name a year later. A repository that genuinely does not want to describe
+    /// its metrics says so here, in one line, rather than by omission — so that
+    /// "not described" and "chose not to describe" stay apart.
+    #[serde(default = "yes")]
+    pub require_docs: bool,
     /// What one named metric measures.
     #[serde(default)]
     pub metrics: BTreeMap<String, MetricDoc>,
@@ -232,12 +242,31 @@ pub struct MatchedPattern {
     pub n_matched: usize,
 }
 
+/// `require_docs`'s default. Serde wants a function, not a literal.
+fn yes() -> bool {
+    true
+}
+
+impl Default for Declaration {
+    fn default() -> Self {
+        Self {
+            require_docs: true,
+            metrics: BTreeMap::new(),
+            metric_patterns: Vec::new(),
+            parameters: BTreeMap::new(),
+        }
+    }
+}
+
 impl Declaration {
     /// Reads `<repo_root>/runvault.toml`.
     ///
-    /// A repository without one is not an error: every replication that exists
-    /// today has no declaration, and refusing to run there would make the
-    /// feature a breaking change rather than an addition.
+    /// `None` means the file is not there. That is no longer the same as "this
+    /// repository has nothing to declare": since descriptions became required,
+    /// a repository under a known root that records a metric without this file
+    /// is refused at the moment it records one (see `Run`). The distinction is
+    /// kept here rather than resolved, because the caller is the one that knows
+    /// whether a root was known at all.
     pub fn load(repo_root: &Path) -> Result<Option<Self>> {
         let path: PathBuf = repo_root.join(DECLARATION_FILE);
         if !path.exists() {
@@ -247,6 +276,19 @@ impl Declaration {
         let parsed: Self =
             toml::from_str(&text).map_err(|e| Error::Spec(format!("{}: {e}", path.display())))?;
         Ok(Some(parsed))
+    }
+
+    /// Whether this declaration says what `name` measures.
+    ///
+    /// The exact name first, a family second — the same order `resolve` and the
+    /// audit use, so that what is allowed to be recorded and what is counted as
+    /// described can never disagree.
+    ///
+    /// The reserved names of the core vocabulary are *not* asked about here.
+    /// Their meaning is the registry's, not a repository's, and the caller adds
+    /// them.
+    pub fn describes(&self, name: &str) -> bool {
+        self.metrics.contains_key(name) || self.metric_patterns.iter().any(|p| p.matches(name))
     }
 
     /// The share of the declaration that applies to `names`.
@@ -259,9 +301,16 @@ impl Declaration {
         let mut counts: Vec<usize> = vec![0; self.metric_patterns.len()];
         let mut undescribed = Vec::new();
 
+        let vocabulary = crate::vocabulary::get();
         for name in names {
             if let Some(doc) = self.metrics.get(name) {
                 metrics.insert(name.clone(), doc.clone());
+                continue;
+            }
+            // A reserved name is described by the registry, once, for every
+            // repository. Listing it here would have the run claim nobody said
+            // what `n_units` is, next to the vocabulary that says it.
+            if vocabulary.metric_names.contains_key(name.as_str()) {
                 continue;
             }
             // The exact name wins over a pattern: a family can be described in
@@ -503,14 +552,125 @@ mod run_tests {
     }
 
     #[test]
-    fn a_repository_without_a_declaration_still_runs() {
-        // 既存の 5 リポジトリはどれも宣言を持たない．足した機能で走らなくなっては困る．
+    fn a_repository_without_a_declaration_cannot_record_a_metric() {
+        // 説明は必須になった（2026-09-08）．宣言ファイルが無いリポジトリは，
+        // «説明することが無い» のではなく «まだ書いていない» のだから，拒む．
         let repo = repo_with(None);
+        let results = tempfile::tempdir().unwrap();
+        let mut run = run_in(repo.path(), results.path());
+        let err = run.log_metric("converged", 1.0).send().unwrap_err();
+        let message = err.to_string();
+        assert!(message.contains("converged"), "{message}");
+        assert!(message.contains(DECLARATION_FILE), "{message}");
+        assert!(message.contains("require_docs"), "{message}");
+    }
+
+    #[test]
+    fn a_repository_may_say_it_does_not_describe_its_metrics() {
+        // 逃げ道は 1 行で，明示的に書く．書かなかったこと（＝ファイルの不在）と
+        // 書かないと決めたことを分けておく．
+        let repo = repo_with(Some("require_docs = false\n"));
         let results = tempfile::tempdir().unwrap();
         let mut run = run_in(repo.path(), results.path());
         run.log_metric("converged", 1.0).send().unwrap();
         let dir = run.finish().unwrap();
         assert!(!dir.join(META_FILE).exists());
+    }
+
+    #[test]
+    fn an_undescribed_metric_is_refused_where_it_is_recorded() {
+        // 落ちるのは記録した瞬間．sweep が 15 分かけて計算し終えてからでは，
+        // 直して走らせ直す費用が «書き忘れた 1 行» に見合わない．
+        let repo = repo_with(Some(
+            r#"
+            [metrics."described"]
+            meaning = "宣言のある指標"
+            "#,
+        ));
+        let results = tempfile::tempdir().unwrap();
+        let mut run = run_in(repo.path(), results.path());
+        run.log_metric("described", 1.0).send().unwrap();
+        let err = run.log_metric("forgotten", 2.0).send().unwrap_err();
+        assert!(err.to_string().contains("forgotten"), "{err}");
+
+        // 拒まれた行は書かれていない — 記録の前に問うているため．
+        let text = std::fs::read_to_string(run.dir().join("metrics.csv")).unwrap();
+        assert!(!text.contains("forgotten"), "{text}");
+    }
+
+    #[test]
+    fn a_family_is_enough_to_let_a_name_through() {
+        // javitz1991 の 11,309 件を名前ごとに書くことはできない．形で通す．
+        let repo = repo_with(Some(
+            r#"
+            [[metric_patterns]]
+            pattern = "{scenario}.q_ordinal.{measure}.{statistic}"
+            meaning = "Q 統計量"
+            "#,
+        ));
+        let results = tempfile::tempdir().unwrap();
+        let mut run = run_in(repo.path(), results.path());
+        run.log_metric("normal.q_ordinal.0.mean", 1.0).send().unwrap();
+        // 区画の数が合わない名前には当たらないので，これは通らない．
+        let err = run.log_metric("normal.q_ordinal.0", 1.0).send().unwrap_err();
+        assert!(err.to_string().contains("normal.q_ordinal.0"), "{err}");
+    }
+
+    #[test]
+    fn a_reserved_name_needs_no_declaration() {
+        // 予約指標の意味は語彙が決めている．リポジトリに書き写させない．
+        let repo = repo_with(Some(
+            r#"
+            [metrics."described"]
+            meaning = "宣言のある指標"
+            "#,
+        ));
+        let results = tempfile::tempdir().unwrap();
+        let mut run = run_in(repo.path(), results.path());
+        run.log_metric("n_units", 42.0).send().unwrap();
+        let dir = run.finish().unwrap();
+        // 語彙が説明しているので «説明が無い» とは書かない．
+        assert!(!dir.join(META_FILE).exists());
+    }
+
+    #[test]
+    fn a_run_raised_outside_any_repository_is_not_asked() {
+        // 宣言ファイルの置き場所が分からない run に，その置き場所を要求できない．
+        let results = tempfile::tempdir().unwrap();
+        let mut run = Run::start(
+            RunOptions::new("e", "main")
+                .repo_id("demo")
+                .domain("other")
+                .origin(Origin::Manual)
+                .results_root(results.path())
+                .parameters(&serde_json::json!({}))
+                .unwrap(),
+        )
+        .unwrap();
+        run.log_metric("whatever", 1.0).send().unwrap();
+        run.finish().unwrap();
+    }
+
+    #[test]
+    fn a_malformed_declaration_is_an_error_not_an_absence() {
+        // 握り潰すと，打ち間違えた runvault.toml が «何も宣言していない» に化け，
+        // 最初の指標で «ファイルが無い» と言われる（見当違いの案内になる）．
+        let repo = repo_with(Some("[metrics.\"x\"]\nmeaning = \n"));
+        let results = tempfile::tempdir().unwrap();
+        let started = Run::start(
+            RunOptions::new("e", "main")
+                .repo_id("demo")
+                .domain("other")
+                .origin(Origin::Manual)
+                .results_root(results.path())
+                .repo_root(repo.path())
+                .parameters(&serde_json::json!({}))
+                .unwrap(),
+        );
+        let Err(err) = started else {
+            panic!("打ち間違えた宣言で run が始まってしまった");
+        };
+        assert!(err.to_string().contains(DECLARATION_FILE), "{err}");
     }
 
     #[test]
@@ -537,9 +697,12 @@ mod run_tests {
     #[test]
     fn nothing_is_written_when_nothing_is_described() {
         // «何も説明されていない» と書いたファイルは，無いファイルと同じことしか
-        // 言っていない．1,222 の run に置く理由がない．
+        // 言っていない．説明が必須になった今も，説明を要さない予約指標だけを
+        // 記録した run はこの形になる．
         let repo = repo_with(Some(
             r#"
+            require_docs = false
+
             [metrics."something_else"]
             meaning = "この run は測っていない"
             "#,

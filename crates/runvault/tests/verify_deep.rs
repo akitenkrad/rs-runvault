@@ -11,6 +11,16 @@ use std::process::Command;
 use runvault::{Run, RunOptions};
 use serde_json::{Value, json};
 
+/// What the fixture repository says its metrics measure.
+///
+/// Descriptions are required, so a repository that records `segregation_index`
+/// has to say what it is — the fixture is a repository like any other.
+const DECLARATION: &str = r#"
+[metrics."segregation_index"]
+meaning = "同類が隣り合っている度合い"
+unit = "ratio"
+"#;
+
 /// A git repository with one commit, so `origin = code` records a lock file.
 fn git_repo() -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
@@ -30,6 +40,7 @@ fn git_repo() -> tempfile::TempDir {
     run(&["config", "user.email", "t@example.com"]);
     run(&["config", "user.name", "t"]);
     std::fs::write(dir.path().join("Cargo.lock"), "# lock").unwrap();
+    std::fs::write(dir.path().join("runvault.toml"), DECLARATION).unwrap();
     run(&["add", "-A"]);
     run(&["commit", "-qm", "first"]);
     dir

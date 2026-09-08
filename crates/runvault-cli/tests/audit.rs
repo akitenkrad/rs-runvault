@@ -1,10 +1,13 @@
 //! `runvault metrics audit`: how much of the vault says what it measured.
 //!
-//! The declaration is optional (design note §3.11), so the only thing standing
-//! between "optional" and "never written" is this count. These tests hold it to
-//! the three things it has to get right: the split per experiment, the folding
-//! of a generated tree into the family that describes it, and saying so when
-//! the list of undescribed names is cut.
+//! Descriptions became required at the point a metric is recorded (2026-09-08),
+//! but the 1,222 runs already in the vault predate the rule and cannot be given
+//! descriptions after the fact. So the audit still has undescribed names to
+//! count, and these fixtures reproduce them the only way a run can carry one
+//! now: the repository has said `require_docs = false`. These tests hold the
+//! audit to the three things it has to get right: the split per experiment, the
+//! folding of a generated tree into the family that describes it, and saying so
+//! when the list of undescribed names is cut.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -17,7 +20,13 @@ use serde_json::{Value, json};
 const REPO_ID: &str = "social-simulation-replications";
 
 /// The declaration javitz1991 would carry: one name, one family.
+///
+/// `require_docs = false` because these runs stand in for the ones recorded
+/// before descriptions were required — the names the audit exists to count
+/// could not be recorded at all under the rule.
 const DECLARATION: &str = r#"
+require_docs = false
+
 [metrics."convergence_rate"]
 meaning = "収束した試行の割合"
 unit = "ratio"
@@ -43,11 +52,15 @@ fn private_vault() -> tempfile::TempDir {
     dir
 }
 
+/// A repository, with the declaration it carries.
+///
+/// `None` is a repository that describes nothing — written as the one line that
+/// says so, rather than as a missing file, because a missing file now refuses
+/// the first metric outright.
 fn repo_with(declaration: Option<&str>) -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
-    if let Some(text) = declaration {
-        std::fs::write(dir.path().join("runvault.toml"), text).unwrap();
-    }
+    let text = declaration.unwrap_or("require_docs = false\n");
+    std::fs::write(dir.path().join("runvault.toml"), text).unwrap();
     dir
 }
 

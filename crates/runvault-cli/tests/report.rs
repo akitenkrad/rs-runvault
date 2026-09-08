@@ -452,6 +452,10 @@ fn declared_run(results: &Path, experiment: &str, metrics: &[&str]) -> tempfile:
     std::fs::write(
         repo.path().join("runvault.toml"),
         r#"
+        # 画面が «説明が記録されていません» を出す場面を作るために，説明の無い
+        # 指標を記録する必要がある．必須のままでは記録そのものが拒まれる．
+        require_docs = false
+
         [metrics."segregation_index"]
         meaning = "同類に囲まれている度合い"
         unit = "ratio"

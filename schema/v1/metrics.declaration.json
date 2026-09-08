@@ -11,6 +11,11 @@
       "const": "1.0",
       "description": "metrics.meta.json にだけ現れる. runvault.toml は宣言なので版を持たない"
     },
+    "require_docs": {
+      "type": "boolean",
+      "default": true,
+      "description": "すべての指標に説明を要るか (runvault.toml 側の最上位の鍵). 既定は true で, 宣言にもコア語彙にも無い指標を記録しようとした時点で run が拒まれる. 説明を書かないと決めたリポジトリだけが false と書く — ファイルが無いことは «書かないと決めた» ではなく «まだ書いていない» と読み, 拒む (設計書 §3.11)"
+    },
     "metrics": {
       "type": "object",
       "description": "名前そのものの説明. 手で名づけた指標はこれで足りる (5 つの socsim リポジトリ合わせて 74 件)",

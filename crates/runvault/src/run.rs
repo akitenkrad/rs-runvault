@@ -427,6 +427,13 @@ pub struct Run {
     /// says they mean. Only the part that applies is written out (§3.11).
     metric_names: BTreeSet<String>,
     metrics_declaration: Option<crate::metrics_meta::Declaration>,
+    /// Where the declaration was looked for, when there was somewhere to look.
+    ///
+    /// Kept apart from `metrics_declaration` because the two absences mean
+    /// different things: no root is "we were never told which repository this
+    /// is", and cannot be turned into a demand for a file; a root with no file
+    /// is a repository that has not said what it measures, which is refused.
+    declaration_root: Option<PathBuf>,
     /// The condition as given, kept so `finish()` can say which settings the
     /// declaration actually applies to without reading `config.json` back.
     parameters: serde_json::Value,
@@ -578,10 +585,15 @@ impl Run {
             // Read once at the start. Reading it at `finish()` instead would let
             // an edit made while the run was going decide what the run measured.
             parameters: options.parameters.clone(),
-            metrics_declaration: declaration_root
-                .as_ref()
-                .and_then(|root| crate::metrics_meta::Declaration::load(root).ok())
-                .flatten(),
+            // A malformed declaration is an error, not an absence. Swallowing
+            // it would present a typo'd `runvault.toml` as "this repository
+            // declares nothing", and the run would then be refused at its first
+            // metric with a message pointing at the wrong problem.
+            metrics_declaration: match &declaration_root {
+                Some(root) => crate::metrics_meta::Declaration::load(root)?,
+                None => None,
+            },
+            declaration_root,
             reference: None,
             events: None,
             counts: Counts::default(),
@@ -947,7 +959,58 @@ impl Run {
         files::write_json_atomically(&self.dir.join("status.json"), &status)
     }
 
+    /// Refuses a metric name nothing describes.
+    ///
+    /// Asked the first time a name is seen, before the row is written, so the
+    /// failure lands within seconds of the run starting rather than after a
+    /// sweep has spent a quarter of an hour computing numbers that could not be
+    /// read back. The run directory is left where it is: the fix is a line in
+    /// `runvault.toml`, and the half-written run says which line.
+    ///
+    /// The order is the order of authority — the repository's own declaration,
+    /// then the reserved names of the core vocabulary, then the families. It is
+    /// the order `Declaration::resolve` and `runvault metrics audit` use, so a
+    /// name that is allowed to be recorded is always a name they count as
+    /// described.
+    fn check_metric_described(&self, name: &str) -> Result<()> {
+        // Nowhere to have looked for a declaration: a run raised by hand,
+        // outside any repository. There is no file to point the writer at, so
+        // there is nothing to demand.
+        let Some(root) = &self.declaration_root else {
+            return Ok(());
+        };
+        if vocabulary::get().metric_names.contains_key(name) {
+            return Ok(());
+        }
+        match &self.metrics_declaration {
+            Some(declaration) => {
+                if !declaration.require_docs || declaration.describes(name) {
+                    return Ok(());
+                }
+                Err(Error::spec(format!(
+                    "指標 `{name}` の説明が {} にありません \
+                     (`[metrics.\"{name}\"]` に meaning を書くか, この名前に当たる \
+                     `[[metric_patterns]]` を足してください. \
+                     説明を書かないと決めているリポジトリは require_docs = false と書きます)",
+                    root.join(crate::metrics_meta::DECLARATION_FILE).display()
+                )))
+            }
+            None => Err(Error::spec(format!(
+                "指標 `{name}` の説明がありません — {} が置かれていません \
+                 (指標の説明は必須です. 説明を書かないと決めているリポジトリは, \
+                 このファイルに require_docs = false とだけ書きます)",
+                root.join(crate::metrics_meta::DECLARATION_FILE).display()
+            ))),
+        }
+    }
+
     fn append_metric_row(&mut self, row: [String; 6], flush: bool) -> Result<()> {
+        // Before the row is written, and only on a name's first appearance:
+        // the answer cannot change within a run, since the declaration is read
+        // once at the start.
+        if !self.metric_names.contains(&row[4]) {
+            self.check_metric_described(&row[4])?;
+        }
         let writer = match &mut self.metrics {
             Some(w) => w,
             None => {

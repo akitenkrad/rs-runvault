@@ -7,9 +7,16 @@ a year later, `mean_n_surviving` is a guess and `normal.q_ordinal.0.mean` is not
 even that. `metrics.csv` has six columns — `run_uid, step, step_unit, scope,
 name, value` — and none of them is a place to write it down.
 
-Descriptions are **optional**, and will stay optional: runs that already exist
-have none, and none can be added to them after the fact. What replaces the
-requirement is a count — see [the audit](#the-audit).
+Descriptions are **required**. A run is refused the moment it records a metric
+nothing describes, so a name cannot reach `metrics.csv` without one. This was
+not the first arrangement: descriptions were optional until the audit had
+counted what optional produced — 13,602 names, of which 4 were described, and
+all four of those were reserved words. Nothing was voluntarily written. See
+[required, and how to opt out](#required-and-how-to-opt-out).
+
+Runs recorded before the rule keep their undescribed names, since nothing can be
+added to them after the fact. Counting those is what [the audit](#the-audit) is
+still for.
 
 ## Why the meaning is not written per name
 
@@ -57,6 +64,7 @@ agg      = "how that component was aggregated"
 
 | Field | Means |
 | --- | --- |
+| `require_docs` | whether every metric has to be described. `true` unless the file says otherwise; a top-level key, not part of `[metrics]` |
 | `meaning` | what is being measured. Required for a name; optional for a pattern |
 | `unit` | `ratio`, `count`, `sec`, `usd`, … |
 | `direction` | `up`, `down` or `none` — which way is better |
@@ -74,6 +82,49 @@ pattern quietly claim a deeper family nobody meant to describe.
 
 An exact name always wins over a pattern that would also match it, so a family
 can be described in general and one of its members called out in particular.
+
+## Required, and how to opt out
+
+A repository under a known root that records a metric neither its declaration
+nor the core vocabulary describes is stopped **where the metric is recorded**:
+
+```
+指標 `mean_reach_fraction` の説明が /path/to/repo/runvault.toml にありません
+(`[metrics."mean_reach_fraction"]` に meaning を書くか, この名前に当たる
+ `[[metric_patterns]]` を足してください. 説明を書かないと決めている
+ リポジトリは require_docs = false と書きます)
+```
+
+At the point of recording, rather than at `finish()`, because the failure then
+arrives seconds into the run instead of after a sweep has spent a quarter of an
+hour computing numbers nobody will be able to read back. The row is not written
+and the run directory is left where it is; the fix is a line in `runvault.toml`.
+
+Three things are never asked to be declared:
+
+- **Reserved names** (`n_units`, `cost_usd`, `tokens_in`, `tokens_out`). Their
+  meaning is the registry's, fixed for every repository, and not a
+  repository's to restate.
+- **Runs raised outside any repository** — no `repo_root`, and `origin` not
+  `code`. There is no file to point the author at, so there is nothing to
+  demand.
+- **A repository that has said it does not describe its metrics**, with one
+  top-level line:
+
+  ```toml
+  require_docs = false
+  ```
+
+A repository that means to skip this says so in that line. A **missing**
+`runvault.toml` is not read as the same thing: it is a repository that has not
+written the descriptions yet, and it is refused. Keeping the two apart is the
+whole point — the metrics that go undescribed by omission are exactly the ones
+nobody will be able to name a year later.
+
+A malformed `runvault.toml` is an error at `Run::start`, not an absence. Read as
+an absence, a typo would present itself as "this repository declares nothing"
+and the run would then fail at its first metric with a message pointing at the
+wrong problem.
 
 ## What the run keeps
 
@@ -122,9 +173,10 @@ runvault metrics audit --vault <VAULT>
 runvault metrics audit --vault <VAULT> --limit 0 --json
 ```
 
-Optional without a count is the same as never, so the audit reports, per
-experiment, how many distinct metric names its runs recorded, how many of those
-something describes, and how many nothing does. (Like the rest of the command
+The audit is what showed that optional meant never, and it is still what reads
+the runs recorded before descriptions were required. It reports, per experiment,
+how many distinct metric names its runs recorded, how many of those something
+describes, and how many nothing does. (Like the rest of the command
 line, it writes its labels in Japanese; `--json` gives the same figures with
 English keys.)
 
