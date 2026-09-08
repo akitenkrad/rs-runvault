@@ -1,7 +1,7 @@
 //! `runvault query --refresh` — the flattened index the SQL reads.
 //!
 //! Thousands of runs cannot be read out of their JSON on every question, so the
-//! aggregation repository is walked once and reduced to eight parquet tables
+//! aggregation repository is walked once and reduced to nine parquet tables
 //! (design note §5.2). The index is a derived thing: it is not tracked by git,
 //! and deleting it costs nothing but the walk.
 //!
@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 
 use runvault::legacy::{self, LegacyRun};
 use runvault::meta::RunMeta;
-use runvault::metrics_meta::MetricsMeta;
+use runvault::metrics_meta::{MetricsMeta, ParametersMeta};
 use runvault::status::{RunStatus, State};
 use runvault::sync::{Compression, SyncReceipt};
 use serde::Deserialize;
@@ -628,6 +628,21 @@ fn flatten_canonical(
                 },
             );
             rows.push("metric_docs", row);
+        }
+    }
+
+    // What each setting of the condition is. The same split as the metrics: the
+    // run carries the answer, and the index carries it because the report reads
+    // nothing else.
+    if let Some(param_docs) = stored_json::<ParametersMeta>(dir, receipt, "parameters.meta.json") {
+        for (pointer, doc) in &param_docs.parameters {
+            let mut row = Row::new();
+            row.insert("run_key", Cell::Text(key.clone()));
+            row.insert("run_uid", Cell::Text(meta.run_uid.clone()));
+            row.insert("pointer", Cell::Text(pointer.clone()));
+            row.insert("meaning", Cell::Text(doc.meaning.clone()));
+            row.insert("unit", Cell::text(doc.unit.as_deref()));
+            rows.push("parameter_docs", row);
         }
     }
     Ok(())

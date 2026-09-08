@@ -115,6 +115,7 @@ pub fn build(vault_root: &Path) -> Result<Value, String> {
     let targets_table = table(vault_root, "run_targets");
     let jira_table = table(vault_root, "run_jira");
     let docs_table = table(vault_root, "metric_docs");
+    let param_docs_table = table(vault_root, "parameter_docs");
 
     let (experiments, carried) = experiments(
         &connection,
@@ -122,6 +123,7 @@ pub fn build(vault_root: &Path) -> Result<Value, String> {
         &metrics_table,
         &jira_table,
         &docs_table,
+        &param_docs_table,
     )?;
     let runs = runs(
         &connection,
@@ -135,7 +137,7 @@ pub fn build(vault_root: &Path) -> Result<Value, String> {
     let warnings = warnings(&connection, &runs_table)?;
 
     Ok(json!({
-        "schema_version": "1.5",
+        "schema_version": "1.6",
         "vocab_version": vocabulary.version,
         "generated_at": chrono::Local::now().to_rfc3339(),
         "freshness_hours": vocabulary.freshness_hours,
@@ -177,6 +179,7 @@ fn experiments(
     metrics_table: &str,
     jira_table: &str,
     docs_table: &str,
+    param_docs_table: &str,
 ) -> Result<(Vec<Value>, Carried), String> {
     // `experiment` is grouped as it is, `NULL` included: a legacy run written
     // straight into `results/` never recorded which experiment it belonged to,
@@ -198,6 +201,7 @@ fn experiments(
             "primary_metrics": Value::Array(Vec::new()),
             "jira": Value::Array(Vec::new()),
             "metric_docs": json!({"names": Map::new(), "patterns": []}),
+            "parameter_docs": json!({}),
             "cost_usd": Value::Null,
             "git_remote": Value::Null,
         }));
@@ -310,6 +314,7 @@ fn experiments(
     }
 
     let docs = metric_docs(connection, runs_table, docs_table)?;
+    let param_docs = parameter_docs(connection, runs_table, param_docs_table)?;
 
     for experiment in &mut out {
         let key = (
@@ -334,8 +339,42 @@ fn experiments(
         if let Some(found) = docs.get(&key) {
             experiment["metric_docs"] = found.clone();
         }
+        if let Some(found) = param_docs.get(&key) {
+            experiment["parameter_docs"] = found.clone();
+        }
     }
     Ok((out, carried))
+}
+
+/// What each experiment's conditions are, as its repository declared it.
+///
+/// Keyed by JSON pointer, the way the declaration writes them. The same
+/// description reaches every run of the experiment, so the rows come back once
+/// per run and are folded here; the first spelling in order wins.
+fn parameter_docs(
+    connection: &Connection,
+    runs_table: &str,
+    param_docs_table: &str,
+) -> Result<BTreeMap<(String, Option<String>), Value>, String> {
+    let sql = format!(
+        "SELECT DISTINCT r.repo_id, r.experiment, d.pointer, d.meaning, d.unit
+         FROM {runs_table} AS r JOIN {param_docs_table} AS d USING (run_key)
+         ORDER BY 1, 2, 3"
+    );
+    let mut out: BTreeMap<(String, Option<String>), Value> = BTreeMap::new();
+    each_row(connection, &sql, |row| {
+        let (Some(pointer), Some(meaning)) = (text(&row[2]), text(&row[3])) else {
+            return Ok(());
+        };
+        let entry = out
+            .entry((text(&row[0]).unwrap_or_default(), text(&row[1])))
+            .or_insert_with(|| json!({}));
+        let map = entry.as_object_mut().expect("parameter_docs is an object");
+        map.entry(pointer)
+            .or_insert(json!({"meaning": meaning, "unit": text(&row[4])}));
+        Ok(())
+    })?;
+    Ok(out)
 }
 
 /// What each experiment's metrics mean, as its repository declared it.

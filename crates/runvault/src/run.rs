@@ -427,6 +427,9 @@ pub struct Run {
     /// says they mean. Only the part that applies is written out (§3.11).
     metric_names: BTreeSet<String>,
     metrics_declaration: Option<crate::metrics_meta::Declaration>,
+    /// The condition as given, kept so `finish()` can say which settings the
+    /// declaration actually applies to without reading `config.json` back.
+    parameters: serde_json::Value,
     reference: Option<csv::Writer<File>>,
     events: Option<BufWriter<File>>,
     counts: Counts,
@@ -574,6 +577,7 @@ impl Run {
             metric_names: BTreeSet::new(),
             // Read once at the start. Reading it at `finish()` instead would let
             // an edit made while the run was going decide what the run measured.
+            parameters: options.parameters.clone(),
             metrics_declaration: declaration_root
                 .as_ref()
                 .and_then(|root| crate::metrics_meta::Declaration::load(root).ok())
@@ -807,6 +811,7 @@ impl Run {
         // names, and `runvault verify` would report it as tampering.
         self.close_to_progress();
         self.write_metrics_meta()?;
+        self.write_parameters_meta()?;
         self.write_manifest()?;
 
         // The lock goes before `status.json`: a completed run must never be found
@@ -870,6 +875,25 @@ impl Run {
             return Ok(());
         }
         files::write_json_atomically(&self.dir.join(crate::metrics_meta::META_FILE), &meta)
+    }
+
+    /// What each setting of the condition is, for the settings this run has.
+    ///
+    /// A separate file from `metrics.meta.json` because the two are
+    /// independent: a repository may describe one and not the other, and each
+    /// is written only when something applies.
+    fn write_parameters_meta(&mut self) -> Result<()> {
+        let Some(declaration) = &self.metrics_declaration else {
+            return Ok(());
+        };
+        let meta = declaration.resolve_parameters(&self.parameters);
+        if meta.is_empty() {
+            return Ok(());
+        }
+        files::write_json_atomically(
+            &self.dir.join(crate::metrics_meta::PARAMETERS_META_FILE),
+            &meta,
+        )
     }
 
     fn write_manifest(&mut self) -> Result<()> {

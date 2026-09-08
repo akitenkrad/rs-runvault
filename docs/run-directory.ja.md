@@ -67,6 +67,12 @@ run がどう終わったか，いつ始まりいつ終わったか，そして�
 存在しない — «何も説明されていない» と書いたファイルは，無いファイルと同じことしか
 言っていない．[指標の意味](metrics.ja.md) を参照．
 
+### `parameters.meta.json`
+
+条件の各設定が何か．リポジトリの `runvault.toml` から `finish()` が写したもので，
+鍵は JSON ポインタである．`metrics.meta.json` と別なのは，2 つが独立していて片方だけを
+宣言したリポジトリがありうるため．[指標の意味](metrics.ja.md) を参照．
+
 ### `manifest.csv`
 
 run が書いた全ファイルについて `run_uid, path, algorithm, digest, bytes`．

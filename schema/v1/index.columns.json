@@ -538,6 +538,40 @@
         }
       ]
     },
+    "parameter_docs": {
+      "primary_key": [
+        "run_key",
+        "pointer"
+      ],
+      "columns": [
+        {
+          "name": "run_key",
+          "type": "string",
+          "nullable": false
+        },
+        {
+          "name": "run_uid",
+          "type": "string",
+          "nullable": true
+        },
+        {
+          "name": "pointer",
+          "type": "string",
+          "nullable": false,
+          "note": "条件を指す JSON ポインタ (/eps_l など)"
+        },
+        {
+          "name": "meaning",
+          "type": "string",
+          "nullable": false
+        },
+        {
+          "name": "unit",
+          "type": "string",
+          "nullable": true
+        }
+      ]
+    },
     "reference": {
       "primary_key": [
         "run_key",

@@ -21,7 +21,7 @@ implementation read them, and CI fails when either drifts.
 | `status.json` | `status.json` |
 | `sync.json` | The receipt left in a synced run directory |
 | `vault.config.json` | `runvault-vault.toml`, the aggregation repository's declaration |
-| `index.columns.json` | The flattened columns of the eight parquet tables |
+| `index.columns.json` | The flattened columns of the nine parquet tables |
 | `index.columns.meta.json` | The meta-schema that keeps `index.columns.json` well formed |
 | `runs.report.json` | The dashboard payload `runvault report --obsidian` writes |
 | `vocabulary.toml` | The core vocabulary, versioned by `vocab_version` |

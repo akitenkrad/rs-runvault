@@ -191,7 +191,7 @@ fn the_payload_matches_the_contract_the_dashboard_reads() {
     let report = payload(results.path(), vault.path());
 
     assert_valid(&report);
-    assert_eq!(report["schema_version"], json!("1.5"));
+    assert_eq!(report["schema_version"], json!("1.6"));
     assert!(report["vocab_version"].as_str().is_some());
     assert_eq!(report["freshness_hours"], json!(24.0));
     // The list is not capped any more, so there is no rule to report.
@@ -462,6 +462,13 @@ fn declared_run(results: &Path, experiment: &str, metrics: &[&str]) -> tempfile:
         meaning = "止まるまでの反復回数"
         unit = "count"
 
+        [parameters."/rows"]
+        meaning = "格子の行数"
+        unit = "count"
+
+        [parameters."/seed"]
+        meaning = "この試行の乱数種"
+
         [[metric_patterns]]
         pattern = "{scenario}.q_ordinal.{index}.{agg}"
         meaning = "IDES の順序統計量"
@@ -663,4 +670,36 @@ fn a_run_with_no_name_carries_null_rather_than_an_empty_one() {
     assert_eq!(run["label"], json!(null));
     assert_eq!(run["sweep_index"], json!(null));
     assert_eq!(run["sweep_total"], json!(null));
+}
+
+#[test]
+fn an_experiment_carries_what_its_conditions_are() {
+    // 条件も指標と同じで «実験の性質» なので `experiments[]` に載る．
+    let results = tempfile::tempdir().unwrap();
+    let vault = private_vault();
+    let _repo = declared_run(results.path(), "schelling", &["segregation_index"]);
+    let report = payload(results.path(), vault.path());
+    assert_valid(&report);
+
+    let docs = &experiment_named(&report, "schelling")["parameter_docs"];
+    assert_eq!(docs["/rows"]["meaning"], json!("格子の行数"));
+    assert_eq!(docs["/rows"]["unit"], json!("count"));
+    assert_eq!(docs["/seed"]["unit"], json!(null));
+    // 宣言していない設定は載らない（画面が «説明が記録されていません» と出す）．
+    assert!(docs.get("/threshold").is_none(), "{docs}");
+}
+
+#[test]
+fn an_experiment_that_described_no_condition_carries_an_empty_object() {
+    let results = tempfile::tempdir().unwrap();
+    let vault = private_vault();
+    replication_run(results.path(), 42, 0.83);
+    let report = payload(results.path(), vault.path());
+    assert_valid(&report);
+
+    // 鍵はあって空．«まだ読めていない» と区別できる形にしておく．
+    assert_eq!(
+        experiment_named(&report, "schelling")["parameter_docs"],
+        json!({})
+    );
 }

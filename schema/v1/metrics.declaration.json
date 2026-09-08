@@ -14,22 +14,30 @@
     "metrics": {
       "type": "object",
       "description": "名前そのものの説明. 手で名づけた指標はこれで足りる (5 つの socsim リポジトリ合わせて 74 件)",
-      "additionalProperties": { "$ref": "#/$defs/doc" }
+      "additionalProperties": {
+        "$ref": "#/$defs/doc"
+      }
     },
     "metric_patterns": {
       "type": "array",
       "description": "名前の形の説明 (runvault.toml 側). 生成された木はこちらで書く",
-      "items": { "$ref": "#/$defs/pattern" }
+      "items": {
+        "$ref": "#/$defs/pattern"
+      }
     },
     "patterns": {
       "type": "array",
       "description": "この run の名前に実際に当たった形 (metrics.meta.json 側)",
       "items": {
         "allOf": [
-          { "$ref": "#/$defs/pattern" },
+          {
+            "$ref": "#/$defs/pattern"
+          },
           {
             "type": "object",
-            "required": ["n_matched"],
+            "required": [
+              "n_matched"
+            ],
             "properties": {
               "n_matched": {
                 "type": "integer",
@@ -43,36 +51,63 @@
     },
     "undescribed": {
       "type": "array",
-      "items": { "$ref": "common.json#/$defs/nonempty" },
+      "items": {
+        "$ref": "common.json#/$defs/nonempty"
+      },
       "description": "この run が記録した名前のうち, 何も説明していないもの. 黙って落とすと『説明が無い』ことに気づけないので書き出す"
+    },
+    "parameters": {
+      "type": "object",
+      "description": "条件 (config.json の /parameters) の各設定が何か. 鍵は JSON ポインタ (/eps_l, /grid/start) — hash_exclude と seed_pointers が既にポインタなので, 同じファイルで 2 つの書き方を混ぜない",
+      "additionalProperties": {
+        "$ref": "#/$defs/parameter_doc"
+      },
+      "propertyNames": {
+        "pattern": "^/"
+      }
     }
   },
   "$defs": {
     "direction": {
-      "enum": ["up", "down", "none"],
+      "enum": [
+        "up",
+        "down",
+        "none"
+      ],
       "description": "どちらが良いか. 3 値で固定する. 無い指標に画面が『良い/悪い』を出さないための欄で, none は『どちらでもない』と人が書いた値 — 欄の不在とは別"
     },
     "doc": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["meaning"],
+      "required": [
+        "meaning"
+      ],
       "properties": {
         "meaning": {
           "$ref": "common.json#/$defs/nonempty",
           "description": "何を測っているか. 唯一の必須欄"
         },
-        "unit": { "type": "string", "description": "ratio / count / sec / usd など" },
-        "direction": { "$ref": "#/$defs/direction" },
+        "unit": {
+          "type": "string",
+          "description": "ratio / count / sec / usd など"
+        },
+        "direction": {
+          "$ref": "#/$defs/direction"
+        },
         "range": {
           "type": "array",
-          "items": { "type": "number" },
+          "items": {
+            "type": "number"
+          },
           "minItems": 2,
           "maxItems": 2,
           "description": "取りうる範囲. 外れ値の判定に使える"
         },
         "scope": {
           "type": "array",
-          "items": { "$ref": "common.json#/$defs/slug" },
+          "items": {
+            "$ref": "common.json#/$defs/slug"
+          },
           "description": "どの粒度で意味を持つか. コア語彙の予約指標が既に持っている形に揃える"
         }
       }
@@ -80,22 +115,60 @@
     "pattern": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["pattern"],
+      "required": [
+        "pattern"
+      ],
       "properties": {
         "pattern": {
           "$ref": "common.json#/$defs/nonempty",
           "description": "ドット区切りの雛形. {name} と書いた区画が軸で, 1 区画にだけ当たる. 区画の数が合わない名前には当たらない — 前方一致にすると, 誰も説明していない深い一族を勝手に取り込む"
         },
-        "meaning": { "$ref": "common.json#/$defs/nonempty" },
-        "unit": { "type": "string" },
-        "direction": { "$ref": "#/$defs/direction" },
+        "meaning": {
+          "$ref": "common.json#/$defs/nonempty"
+        },
+        "unit": {
+          "type": "string"
+        },
+        "direction": {
+          "$ref": "#/$defs/direction"
+        },
         "axes": {
           "type": "object",
-          "additionalProperties": { "$ref": "common.json#/$defs/nonempty" },
+          "additionalProperties": {
+            "$ref": "common.json#/$defs/nonempty"
+          },
           "description": "軸の名前 (波括弧を除いたもの) → その位置が何を表すか"
         },
-        "n_matched": { "type": "integer", "minimum": 1 }
+        "n_matched": {
+          "type": "integer",
+          "minimum": 1
+        }
       }
+    },
+    "parameter_doc": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "meaning"
+      ],
+      "properties": {
+        "meaning": {
+          "$ref": "common.json#/$defs/nonempty",
+          "description": "その設定が何を決めるか. 唯一の必須欄"
+        },
+        "unit": {
+          "type": "string"
+        },
+        "range": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 2,
+          "maxItems": 2
+        }
+      },
+      "$comment": "direction は持たない. 条件は評価ではないので «どちらが良いか» が無い"
     }
   }
 }

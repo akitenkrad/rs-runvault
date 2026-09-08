@@ -18,7 +18,7 @@
   "properties": {
     "schema_version": {
       "type": "string",
-      "const": "1.5"
+      "const": "1.6"
     },
     "vocab_version": {
       "type": "string",
@@ -45,7 +45,8 @@
           "last_run_at",
           "primary_metrics",
           "jira",
-          "metric_docs"
+          "metric_docs",
+          "parameter_docs"
         ],
         "properties": {
           "experiment": {
@@ -211,6 +212,28 @@
                       "description": "軸名からその位置の意味へ"
                     }
                   }
+                }
+              }
+            }
+          },
+          "parameter_docs": {
+            "type": "object",
+            "description": "この実験の条件 (parameters) の各設定が何か. 鍵は JSON ポインタ. 説明は run ではなく実験の性質なので experiments[] が持つ",
+            "additionalProperties": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "meaning"
+              ],
+              "properties": {
+                "meaning": {
+                  "type": "string"
+                },
+                "unit": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
                 }
               }
             }

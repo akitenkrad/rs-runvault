@@ -165,6 +165,37 @@ something that experiment declared.
 `range` and `scope` are not carried into the payload. No screen uses them yet,
 and adding a field to a contract later is cheaper than freezing one nobody reads.
 
+## The condition, too
+
+A value is no more self-explanatory than a name. The same file describes what
+each setting of the condition is, keyed by JSON pointer:
+
+```toml
+[parameters."/eps"]
+meaning = "the confidence interval; agents further away than this are not consulted"
+range   = [0.0, 1.0]
+
+[parameters."/n"]
+meaning = "the number of agents"
+unit    = "count"
+```
+
+Pointers rather than bare names, because `hash_exclude` and `seed_pointers`
+already speak in pointers and one file should not hold two spellings of "which
+setting". A pointer also reaches a nested setting, and pointing at the parent
+describes the whole block.
+
+There is no `direction`: a condition is not a score. What a run *reached* is a
+metric; what it was *asked to do* is this.
+
+`finish()` copies the part that applies into `parameters.meta.json` — a second
+file rather than a section of the first, because the two are independent and
+each is written only when something applies. Settings the run has and nobody
+described are listed in `undescribed`; only the top level is counted, since a
+described parent already says what the block under it is.
+
+`runvault report --obsidian` carries them on `experiments[].parameter_docs`.
+
 ## Not in the Python implementation
 
 The Python package writes runs, but does **not** read `runvault.toml` and does

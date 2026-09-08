@@ -91,6 +91,13 @@ run recorded. It is absent when the repository declared nothing, or nothing it
 declared matched: a file saying only "nothing is documented" makes the same claim
 the absent file already makes. See [metric meanings](metrics.md).
 
+### `parameters.meta.json`
+
+What each setting of the condition is, copied out of the repository's
+`runvault.toml` by `finish()`, keyed by JSON pointer. Separate from
+`metrics.meta.json` because the two are independent — a repository may describe
+one and not the other. See [metric meanings](metrics.md).
+
 ### `manifest.csv`
 
 `run_uid, path, algorithm, digest, bytes` for everything the run wrote.

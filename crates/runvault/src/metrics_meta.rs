@@ -49,6 +49,14 @@ pub const DECLARATION_FILE: &str = "runvault.toml";
 /// The file written into the run directory.
 pub const META_FILE: &str = "metrics.meta.json";
 
+/// The file the condition's descriptions are written into.
+///
+/// A second file rather than a section of the first: the two are independent —
+/// a repository may describe its metrics and not its conditions — and each is
+/// written only when something applies. One file carrying "nothing here" for
+/// the half that was not declared says less than its absence does.
+pub const PARAMETERS_META_FILE: &str = "parameters.meta.json";
+
 /// Which way is better.
 ///
 /// Three values and no more. A screen that knows this can say which of two runs
@@ -138,6 +146,23 @@ fn is_axis(segment: &str) -> bool {
     segment.len() > 2 && segment.starts_with('{') && segment.ends_with('}')
 }
 
+/// What one setting of the experimental condition is.
+///
+/// No `direction`: a condition is not a score, so "which way is better" has
+/// nothing to say about it. What a run *reached* is a metric; what it was
+/// *asked to do* is this.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ParameterDoc {
+    /// What the setting controls. The one field that is required.
+    pub meaning: String,
+    /// The unit the value is in, where it has one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unit: Option<String>,
+    /// The values it is meant to take, if bounded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub range: Option<[f64; 2]>,
+}
+
 /// A repository's declaration, as read from `runvault.toml`.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Declaration {
@@ -147,6 +172,14 @@ pub struct Declaration {
     /// What a family of names measures.
     #[serde(default)]
     pub metric_patterns: Vec<MetricPattern>,
+    /// What one setting of the condition is, keyed by JSON pointer.
+    ///
+    /// Pointers rather than bare names, because `hash_exclude` and
+    /// `seed_pointers` already speak in pointers and one file should not hold
+    /// two spellings of "which setting". They also reach a nested condition,
+    /// which a bare name cannot.
+    #[serde(default)]
+    pub parameters: BTreeMap<String, ParameterDoc>,
 }
 
 /// What is written into the run directory.
@@ -167,6 +200,26 @@ pub struct MetricsMeta {
     /// Names this run recorded that nothing describes.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub undescribed: Vec<String>,
+}
+
+/// What is written into `parameters.meta.json`.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct ParametersMeta {
+    /// The shape of this file.
+    pub schema_version: String,
+    /// The settings this run actually carries, and what they are.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub parameters: BTreeMap<String, ParameterDoc>,
+    /// Pointers this run carries that nothing describes.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub undescribed: Vec<String>,
+}
+
+impl ParametersMeta {
+    /// Whether there is anything worth writing.
+    pub fn is_empty(&self) -> bool {
+        self.parameters.is_empty()
+    }
 }
 
 /// A pattern that described at least one of this run's names.
@@ -234,6 +287,48 @@ impl Declaration {
             schema_version: "1.0".into(),
             metrics,
             patterns,
+            undescribed,
+        }
+    }
+}
+
+impl Declaration {
+    /// The share of the parameter declaration this run's condition carries.
+    ///
+    /// A pointer that does not resolve in `parameters` describes a setting this
+    /// run does not have, and is left out — the same rule the metric side
+    /// follows. A setting the run has and nobody described is listed in
+    /// `undescribed`, so "nobody wrote this down" stays visible.
+    pub fn resolve_parameters(&self, parameters: &serde_json::Value) -> ParametersMeta {
+        let mut described = BTreeMap::new();
+        for (raw, doc) in &self.parameters {
+            let Ok(pointer) = crate::pointer::Pointer::parse(raw) else {
+                // A pointer that does not parse describes nothing. It is caught
+                // when the declaration is read, not silently applied here.
+                continue;
+            };
+            if pointer.resolve(parameters).is_some() {
+                described.insert(raw.clone(), doc.clone());
+            }
+        }
+
+        // Only the top level is counted as undescribed. A nested setting can be
+        // described by pointing at it or at the object above it, and calling
+        // every leaf of a deep condition "undescribed" would report a hole
+        // where the parent already says what the whole block is.
+        let mut undescribed = Vec::new();
+        if let serde_json::Value::Object(map) = parameters {
+            for key in map.keys() {
+                let pointer = format!("/{}", key.replace('~', "~0").replace('/', "~1"));
+                if !described.contains_key(&pointer) {
+                    undescribed.push(pointer);
+                }
+            }
+        }
+
+        ParametersMeta {
+            schema_version: "1.0".into(),
+            parameters: described,
             undescribed,
         }
     }
@@ -454,5 +549,141 @@ mod run_tests {
         run.log_metric("undocumented_metric", 1.0).send().unwrap();
         let dir = run.finish().unwrap();
         assert!(!dir.join(META_FILE).exists());
+    }
+
+    // -----------------------------------------------------------------
+    // 条件（parameters）の説明（MYTASK-3235）
+    // -----------------------------------------------------------------
+
+    fn with_parameters() -> Declaration {
+        toml::from_str(
+            r#"
+            [parameters."/eps_l"]
+            meaning = "左側の信頼幅"
+            range = [0.0, 1.0]
+
+            [parameters."/n"]
+            meaning = "エージェント数"
+            unit = "count"
+
+            [parameters."/grid/start"]
+            meaning = "走査の始点"
+
+            [parameters."/never_used"]
+            meaning = "この run には無い設定"
+            "#,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn a_run_carries_only_the_settings_it_has() {
+        let params = serde_json::json!({"eps_l": 0.01, "n": 625, "grid": {"start": 0.0}});
+        let meta = with_parameters().resolve_parameters(&params);
+        assert_eq!(meta.parameters.len(), 3, "{meta:?}");
+        assert_eq!(meta.parameters["/eps_l"].meaning, "左側の信頼幅");
+        assert_eq!(meta.parameters["/n"].unit.as_deref(), Some("count"));
+        // 入れ子もポインタで指せる．
+        assert!(meta.parameters.contains_key("/grid/start"));
+        // この run が持たない設定の説明は写らない．
+        assert!(!meta.parameters.contains_key("/never_used"));
+    }
+
+    #[test]
+    fn a_setting_nobody_described_is_listed_rather_than_dropped() {
+        let params = serde_json::json!({"eps_l": 0.01, "tol": 1e-6});
+        let meta = with_parameters().resolve_parameters(&params);
+        assert_eq!(meta.undescribed, ["/tol"], "{meta:?}");
+    }
+
+    #[test]
+    fn a_described_parent_covers_the_settings_under_it() {
+        // 入れ子の葉を全部 «説明なし» と数えると，親が «この塊は何か» を
+        // 言っているのに穴があるように見える．数えるのは最上位だけ．
+        let d: Declaration = toml::from_str(
+            r#"
+            [parameters."/grid"]
+            meaning = "走査するグリッドの定義"
+            "#,
+        )
+        .unwrap();
+        let params = serde_json::json!({"grid": {"start": 0.0, "stop": 1.0, "step": 0.1}});
+        let meta = d.resolve_parameters(&params);
+        assert!(meta.undescribed.is_empty(), "{meta:?}");
+    }
+
+    #[test]
+    fn finish_writes_the_conditions_the_run_actually_had() {
+        let repo = repo_with(Some(
+            r#"
+            [parameters."/eps"]
+            meaning = "信頼幅 ε"
+            range = [0.0, 1.0]
+
+            [parameters."/unused"]
+            meaning = "この run には無い"
+            "#,
+        ));
+        let results = tempfile::tempdir().unwrap();
+        let run = Run::start(
+            RunOptions::new("e", "main")
+                .repo_id("demo")
+                .domain("other")
+                .origin(Origin::Manual)
+                .results_root(results.path())
+                .repo_root(repo.path())
+                .parameters(&serde_json::json!({"eps": 0.15, "tol": 1e-6}))
+                .unwrap(),
+        )
+        .unwrap();
+        let dir = run.finish().unwrap();
+
+        let meta: ParametersMeta =
+            crate::files::read_json(&dir.join(PARAMETERS_META_FILE)).unwrap();
+        assert_eq!(meta.parameters["/eps"].meaning, "信頼幅 ε");
+        assert!(!meta.parameters.contains_key("/unused"));
+        assert_eq!(meta.undescribed, ["/tol"]);
+    }
+
+    #[test]
+    fn no_file_when_the_repository_described_no_condition() {
+        // 指標だけ宣言したリポジトリで，条件のファイルが増えないこと．
+        let repo = repo_with(Some(
+            r#"
+            [metrics."converged"]
+            meaning = "収束したか"
+            "#,
+        ));
+        let results = tempfile::tempdir().unwrap();
+        let mut run = Run::start(
+            RunOptions::new("e", "main")
+                .repo_id("demo")
+                .domain("other")
+                .origin(Origin::Manual)
+                .results_root(results.path())
+                .repo_root(repo.path())
+                .parameters(&serde_json::json!({"eps": 0.15}))
+                .unwrap(),
+        )
+        .unwrap();
+        run.log_metric("converged", 1.0).send().unwrap();
+        let dir = run.finish().unwrap();
+        assert!(dir.join(META_FILE).exists(), "指標の側は書かれる");
+        assert!(!dir.join(PARAMETERS_META_FILE).exists());
+    }
+
+    #[test]
+    fn nothing_is_written_when_no_setting_is_described() {
+        let d: Declaration = toml::from_str(
+            r#"
+            [parameters."/something_else"]
+            meaning = "この run は持っていない"
+            "#,
+        )
+        .unwrap();
+        let meta = d.resolve_parameters(&serde_json::json!({"eps_l": 0.01}));
+        assert!(meta.is_empty(), "{meta:?}");
+        // 説明が 1 つも無くても «説明されていない設定» は数える．
+        assert_eq!(meta.undescribed, ["/eps_l"]);
     }
 }
