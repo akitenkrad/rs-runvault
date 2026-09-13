@@ -162,6 +162,13 @@ class Lineage(BaseModel):
     )
     resumed_from: common.RunUid | None = None
     derived_from: common.RunUid | None = None
+    sweep_index: conint(ge=0) | None = Field(
+        None,
+        description='sweep のグリッド上で何番目の点か (0 始まり). 呼び出し側が渡す — ループを回すのは実装側なので, 既存 run を数えて推測すると並列実行と失敗で 番号がずれる. 渡されなければ null',
+    )
+    sweep_total: conint(ge=1) | None = Field(
+        None, description='そのグリッドの点の総数. «7/40» の 40'
+    )
 
 
 class Work(BaseModel):
@@ -230,6 +237,10 @@ class RunvaultRunMetadata(BaseModel):
     runvault_version: constr(min_length=1)
     run_uid: common.RunUid
     run_slug: common.RunSlug
+    label: constr(max_length=80) | None = Field(
+        None,
+        description='人が付けた短い名前 («ε=0.15» «τ=1/3 基準条件» など). 任意. ハッシュには入らない — 名前は条件ではないので, 同じ条件に別の名前を 付けた 2 本が «別の条件» になってはいけない. run ディレクトリ名も 変えない (置き場を決めるのは runvault で, 名前は記録と画面のためのもの)',
+    )
     repo_id: common.Slug
     experiment: common.Slug
     subcommand: common.Slug

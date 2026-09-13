@@ -610,9 +610,14 @@ mod run_tests {
         ));
         let results = tempfile::tempdir().unwrap();
         let mut run = run_in(repo.path(), results.path());
-        run.log_metric("normal.q_ordinal.0.mean", 1.0).send().unwrap();
+        run.log_metric("normal.q_ordinal.0.mean", 1.0)
+            .send()
+            .unwrap();
         // 区画の数が合わない名前には当たらないので，これは通らない．
-        let err = run.log_metric("normal.q_ordinal.0", 1.0).send().unwrap_err();
+        let err = run
+            .log_metric("normal.q_ordinal.0", 1.0)
+            .send()
+            .unwrap_err();
         assert!(err.to_string().contains("normal.q_ordinal.0"), "{err}");
     }
 

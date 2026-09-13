@@ -71,20 +71,45 @@ SYNC = {
 }
 VAULT = {"schema_version": "1.0", "visibility": "private", "compress_over_mib": 10}
 
+# 同じスキーマが runvault.toml (宣言) と metrics.meta.json (run に写したもの) の両方を受ける (設計書 §3.11)
+METRIC_DECL = {
+    "require_docs": True,
+    "metrics": {"segregation_index": {"meaning": "同種近傍の割合", "unit": "ratio", "direction": "up",
+                                      "range": [0, 1]}},
+    "metric_patterns": [{"pattern": "normal.{q}.mean", "meaning": "分位ごとの平均", "axes": {"q": "分位"}}],
+    "parameters": {"/tolerance": {"meaning": "許容する異種近傍の割合", "unit": "ratio", "range": [0, 1]}},
+}
+METRIC_META = {
+    "schema_version": "1.0",
+    "metrics": METRIC_DECL["metrics"],
+    "patterns": [{**METRIC_DECL["metric_patterns"][0], "n_matched": 4}],
+    "undescribed": ["mystery_score"],
+    "parameters": METRIC_DECL["parameters"],
+}
+
 CONFIG = {"schema_version": "1.0", "run_uid": UID,
           "runvault": {"hash_exclude": ["/output_dir"], "seed_pointers": ["/seed"]},
           "parameters": {"seed": 1}}
 REPORT = {
-    "schema_version": "1.1", "vocab_version": "1.0", "generated_at": TS, "freshness_hours": 24,
+    "schema_version": "1.6", "vocab_version": "1.0", "generated_at": TS, "freshness_hours": 24,
     "experiments": [{"experiment": "p00000009-schelling", "repo_id": "ssr", "n_runs": 3,
                      "n_finished": 3, "last_run_at": TS, "primary_metrics": ["segregation_index"],
                      "jira": ["MYTASK-1880"],
-                     "git_remote": "git@github.com:akitenkrad/schelling1971.git"}],
+                     "git_remote": "git@github.com:akitenkrad/schelling1971.git",
+                     # 指標と条件の説明は run ではなく実験の性質 (設計書 §3.11)
+                     "metric_docs": {
+                         "names": {"segregation_index": {"meaning": "同種近傍の割合", "unit": "ratio",
+                                                         "direction": None}},
+                         "patterns": [{"pattern": "normal.{q}.mean", "meaning": "分位ごとの平均",
+                                       "unit": None, "direction": None, "axes": {"q": "分位"}}]},
+                     "parameter_docs": {"/tolerance": {"meaning": "許容する異種近傍の割合", "unit": "ratio"}}}],
     "runs": [{"run_key": UID, "run_uid": UID, "run_slug": SLUG, "repo_id": "ssr",
               "experiment": "p00000009-schelling",
               "subcommand": "main", "state": "finished", "created_at": TS,
               "git_dirty": False, "metrics": {"segregation_index": 0.834}}],
     "warnings": [],
+    # 予約指標の意味は語彙が決めるので experiments[] に写さず 1 か所に置く
+    "metric_vocabulary": {"runtime_sec": {"meaning": "実行に掛かった壁時計秒", "scope": ["run"]}},
 }
 
 
@@ -261,6 +286,22 @@ def main() -> int:
          R(lineage={"parent_run_uid": UID2, "sweep_id": None}), "sweep_id"),
         ("status: finished の exit_code は null にできる", "status", None,
          mutate(STATUS, exit_code=None), True),
+
+        ("metrics.declaration: runvault.toml 側の正例", "metrics.declaration", None, METRIC_DECL, True),
+        ("metrics.declaration: metrics.meta.json 側の正例", "metrics.declaration", None, METRIC_META, True),
+        ("metrics.declaration: meaning は必須", "metrics.declaration", None,
+         mutate(METRIC_DECL, metrics={"x": {"unit": "sec"}}), "meaning"),
+        ("metrics.declaration: direction は 3 値", "metrics.declaration", None,
+         mutate(METRIC_DECL, metrics={"x": {"meaning": "m", "direction": "higher"}}), "direction"),
+        ("metrics.declaration: parameters の鍵は JSON ポインタ", "metrics.declaration", None,
+         mutate(METRIC_DECL, parameters={"tolerance": {"meaning": "m"}}), "tolerance"),
+        # 条件は評価ではないので «どちらが良いか» を持たない
+        ("metrics.declaration: parameters に direction は置けない", "metrics.declaration", None,
+         mutate(METRIC_DECL, parameters={"/t": {"meaning": "m", "direction": "up"}}), "direction"),
+        ("metrics.declaration: 当たった形は n_matched が要る", "metrics.declaration", None,
+         mutate(METRIC_META, patterns=[{"pattern": "a.{x}"}]), "n_matched"),
+        ("metrics.declaration: 未知キーは許さない", "metrics.declaration", None,
+         {**METRIC_DECL, "notes": "x"}, "notes"),
 
         ("sync: 正例", "sync", None, SYNC, True),
         ("sync: legacy run は run_uid=null で通る", "sync", None,

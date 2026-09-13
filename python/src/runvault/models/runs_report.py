@@ -20,6 +20,77 @@ from pydantic import (
 from . import common
 
 
+class Direction(Enum):
+    """
+    どちらが良いか. null は «誰も決めていない» であって «どちらでもない» ではない — 画面は推測で «良い / 悪い» を言わない
+    """
+
+    up = 'up'
+    down = 'down'
+    none = 'none'
+
+
+class Names(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    meaning: str
+    unit: str | None = Field(
+        None, description='ratio / count / sec / usd など. 値の隣に出す'
+    )
+    direction: Direction | None = Field(
+        None,
+        description='どちらが良いか. null は «誰も決めていない» であって «どちらでもない» ではない — 画面は推測で «良い / 悪い» を言わない',
+    )
+
+
+class Pattern(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    pattern: str = Field(
+        ...,
+        description='区画を `.` で区切った雛形. `{名前}` の区画は軸で, 任意の 1 区画に当たる. 区画の数まで一致しないと当たらない',
+    )
+    meaning: str | None = Field(
+        None, description='何を測っているか. 形の宣言は書かないことがある'
+    )
+    unit: str | None = Field(
+        None, description='ratio / count / sec / usd など. 値の隣に出す'
+    )
+    direction: Direction | None = Field(
+        None,
+        description='どちらが良いか. null は «誰も決めていない» であって «どちらでもない» ではない — 画面は推測で «良い / 悪い» を言わない',
+    )
+    axes: dict[str, Any] | None = Field(None, description='軸名からその位置の意味へ')
+
+
+class MetricDocs(BaseModel):
+    """
+    この実験の指標が何を測っているか (設計書 §3.11). 説明は run ではなく実験の性質なので experiments[] が持つ — runs[].metrics は主要な 12 件しか載せていないため, そちらに付けると届かない
+    """
+
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    names: dict[str, Names] = Field(
+        ...,
+        description='指標名そのものの説明. リポジトリの runvault.toml が宣言し, run が写したもの',
+    )
+    patterns: list[Pattern] = Field(
+        ...,
+        description='名前の形の説明. 生成された木はこちらで説明される (javitz1991 は 4 つの形で 11,309 件). 名前ごとの説明が先に見られ, 当たらなければ上から順に形を試す',
+    )
+
+
+class ParameterDocs(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    meaning: str
+    unit: str | None = None
+
+
 class Experiment(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
@@ -39,6 +110,18 @@ class Experiment(BaseModel):
     )
     primary_metrics: list[common.Slug] = Field(
         ..., description='一覧に出す指標名. 実験ごとに決まる (§5.4)', max_length=3
+    )
+    jira: list[constr(pattern=r'^MYTASK-[0-9]+$')] = Field(
+        ...,
+        description='その実験の run が参照する課題キー (重複なし). runs[] は max_runs で打ち切られるため, 研究テーマ別の束ねはこちらから組む — 打ち切りの外にある実験がテーマから丸ごと消えるのを防ぐ',
+    )
+    metric_docs: MetricDocs = Field(
+        ...,
+        description='この実験の指標が何を測っているか (設計書 §3.11). 説明は run ではなく実験の性質なので experiments[] が持つ — runs[].metrics は主要な 12 件しか載せていないため, そちらに付けると届かない',
+    )
+    parameter_docs: dict[str, ParameterDocs] = Field(
+        ...,
+        description='この実験の条件 (parameters) の各設定が何か. 鍵は JSON ポインタ. 説明は run ではなく実験の性質なので experiments[] が持つ',
     )
 
 
@@ -69,6 +152,10 @@ class Run(BaseModel):
     )
     run_uid: common.RunUid | None = Field(None, description='legacy run では null')
     run_slug: common.RunSlug | None = None
+    label: str | None = Field(
+        None,
+        description='人が付けた run の名前. これが無い run は run_slug の末尾で見分ける — 既存の run はどれも持たない',
+    )
     experiment: common.Slug | None = Field(
         ..., description='legacy では記録に無いことがある'
     )
@@ -80,7 +167,14 @@ class Run(BaseModel):
     created_at: common.Timestamp
     duration_sec: confloat(ge=0.0) | None = None
     git_dirty: bool | None
-    metrics: dict[str, float]
+    metrics: dict[str, float] = Field(
+        ...,
+        description='その実験の主要な指標だけ (出現回数の多い順に vocabulary.toml の [report] summary_metrics 件まで. primary_metrics は必ず含む). **run が記録した全部ではない** — 1 run が 1,270 個持つ実験があり, 全部を載せると日次で作り直す派生物が 20 MB になる. 全部は metrics.csv にあり, 画面は比べる数本だけを読む',
+    )
+    n_metrics: conint(ge=0) | None = Field(
+        None,
+        description='その run が記録した run スコープ (step 無し) の指標の総数. metrics が 12 個しか無いことを画面が «12 / 1,270» と言えるようにするために要る',
+    )
     replication: Replication | None = None
     obsidian_note: constr(min_length=1) | None = None
     jira: list[constr(pattern=r'^MYTASK-[0-9]+$')] | None = None
@@ -90,6 +184,24 @@ class Run(BaseModel):
     repo_id: common.Slug = Field(
         ...,
         description='どのリポジトリの run か. 集約先での置き場 (<集約先>/<repo_id>/…) を引くのに要る',
+    )
+    sweep_id: str | None = Field(
+        None,
+        description='その run が属する sweep. 親も点も同じ値を持つ. 40 点の sweep を 40 個の無関係な行にしないために要る (run.json の lineage.sweep_id)',
+    )
+    parent_run_uid: common.RunUid | None = Field(
+        None, description='sweep の点なら親 run. 親自身と単発の run では null'
+    )
+    sweep_index: conint(ge=0) | None = Field(
+        None, description='sweep のグリッド上の位置 (0 始まり). «7/40» の 7 は index+1'
+    )
+    sweep_total: conint(ge=1) | None = Field(None, description='そのグリッドの点の総数')
+    config_hash: constr(pattern=r'^[0-9a-f]{64}$') | None = Field(
+        None, description='条件のハッシュ. legacy run には無い'
+    )
+    env_hash: constr(pattern=r'^[0-9a-f]{64}$') | None = Field(
+        None,
+        description='環境のハッシュ. 同じ config_hash で割れていれば «条件は同じなのに環境が違う» (warnings の env_split が指しているもの)',
     )
 
 
@@ -110,6 +222,14 @@ class Warning(BaseModel):
     n_run: conint(ge=0) | None = None
 
 
+class MetricVocabulary(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    meaning: str
+    scope: list[str] | None = None
+
+
 class RunsJsonObsidianDashboardPayload(BaseModel):
     """
     runvault report --obsidian が vault に書き出す索引の要約. CLI と Emera コンポーネントの契約
@@ -118,7 +238,7 @@ class RunsJsonObsidianDashboardPayload(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
-    schema_version: Literal['1.0']
+    schema_version: Literal['1.6']
     vocab_version: constr(pattern=r'^[0-9]+\.[0-9]+$')
     generated_at: common.Timestamp
     freshness_hours: PositiveFloat = Field(
@@ -127,3 +247,7 @@ class RunsJsonObsidianDashboardPayload(BaseModel):
     experiments: list[Experiment]
     runs: list[Run]
     warnings: list[Warning]
+    metric_vocabulary: dict[str, MetricVocabulary] = Field(
+        ...,
+        description='予約指標の意味. 語彙 (vocabulary.toml [metric_names]) が決めるものでリポジトリのものではないので, experiments[] に写さず 1 か所に置く. 画面は «名前の宣言 → 予約語 → 形» の順に見る',
+    )
