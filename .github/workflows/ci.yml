@@ -48,5 +48,11 @@ jobs:
       # specification: "it can be generated" is not the same as "it matches".
       - run: uv run --with datamodel-code-generator python tools/gen_pydantic.py
       - run: git diff --exit-code python/src/runvault/models/
+      # The package ships its own copy of vocabulary.toml. pytest holds the copy
+      # byte-identical to schema/v1, but only after the model diff above passes,
+      # so a stale copy hid behind a stale model until both were fixed at once.
+      # Checking it here, on its own, names the drift the moment it happens.
+      - run: uv run python tools/sync_vocabulary.py
+      - run: git diff --exit-code python/src/runvault/data/vocabulary.toml
       - run: uv run --group dev pytest -q
         working-directory: python
