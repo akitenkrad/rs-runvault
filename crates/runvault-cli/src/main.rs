@@ -16,8 +16,19 @@ use runvault::gc::Outcome;
 use runvault::meta::RunMeta;
 use runvault::{Result, files, paths, sync, verify};
 
+const VERSION: &str = concat!(
+    env!("CARGO_PKG_VERSION"),
+    " (commit ",
+    env!("RUNVAULT_GIT_COMMIT"),
+    ")"
+);
+
 #[derive(Parser)]
-#[command(name = "runvault", version, about = "Plain-file experiment tracking")]
+#[command(
+    name = "runvault",
+    version = VERSION,
+    about = "Plain-file experiment tracking"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Command,

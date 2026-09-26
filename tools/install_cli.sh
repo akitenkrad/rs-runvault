@@ -45,6 +45,21 @@ if ! security find-identity -v -p codesigning 2>/dev/null | grep -qF "$IDENTITY"
   exit 1
 fi
 
+# Embed the source identity so refresh_vault.sh can compare it with HEAD and
+# report a stale installed binary (MYTASK-3379).
+RUNVAULT_GIT_COMMIT="$(git -C "$REPO" rev-parse HEAD 2>/dev/null || true)"
+if [[ ! "$RUNVAULT_GIT_COMMIT" =~ ^[0-9a-f]+$ ]] || (( ${#RUNVAULT_GIT_COMMIT} != 40 )); then
+  RUNVAULT_GIT_COMMIT="unknown"
+else
+  if ! git_status="$(git -C "$REPO" status --porcelain --untracked-files=no 2>/dev/null)"; then
+    RUNVAULT_GIT_COMMIT="unknown"
+  elif [[ -n "$git_status" ]]; then
+    RUNVAULT_GIT_COMMIT="${RUNVAULT_GIT_COMMIT}-dirty"
+    say "WARNING: installing from a dirty worktree"
+  fi
+fi
+export RUNVAULT_GIT_COMMIT
+
 # Extra arguments go to cargo, so `install_cli.sh --force` still works.
 say "==> cargo install --path $REPO/crates/runvault-cli $*"
 if ! cargo install --path "$REPO/crates/runvault-cli" "$@"; then
@@ -86,6 +101,7 @@ fi
 say ""
 say "installed and signed: $BIN"
 say "  designated => $requirement"
+"$BIN" --version
 say ""
 say "If macOS asks for access to your Documents folder on the next run, that is"
 say "expected once: the requirement changed, so the old grant no longer matches."
