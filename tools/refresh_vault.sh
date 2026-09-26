@@ -21,24 +21,147 @@
 
 set -uo pipefail
 
-VAULT="$HOME/Documents/Obsidian/_logs/_research"
-DASHBOARD_JSON="$HOME/Documents/Obsidian/_emera_components/ダッシュボード/_data/runs.json"
-RUNVAULT="$HOME/.cargo/bin/runvault"
+VAULT="${VAULT:-$HOME/Documents/Obsidian/_logs/_research}"
+DASHBOARD_JSON="${DASHBOARD_JSON:-$HOME/Documents/Obsidian/_emera_components/ダッシュボード/_data/runs.json}"
+RUNVAULT="${RUNVAULT:-$HOME/.cargo/bin/runvault}"
+RUNVAULT_REFRESH_STATUS="${RUNVAULT_REFRESH_STATUS:-$HOME/Documents/Obsidian/_emera_components/ダッシュボード/_data/runs.refresh.json}"
+RUNVAULT_SOURCE_REPO="${RUNVAULT_SOURCE_REPO:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+RUNVAULT_REFRESH_NOTIFY="${RUNVAULT_REFRESH_NOTIFY:-1}"
+RUNVAULT_REFRESH_LOG="${RUNVAULT_REFRESH_LOG:-$HOME/Library/Logs/obsidian-runvault-refresh.log}"
+if [[ "$RUNVAULT_REFRESH_LOG" != /* ]]; then
+  RUNVAULT_REFRESH_LOG="$(pwd)/$RUNVAULT_REFRESH_LOG"
+fi
 
 # Roots that hold one directory per replication.
 SEARCH_ROOTS=(
   "$HOME/Documents/workspace/social-simulation-replications/replications"
   "$HOME/Documents/workspace/edit-books/traffic-anomaly-detection-the-book/replications"
 )
+if [[ -n "${RUNVAULT_REFRESH_SEARCH_ROOTS+x}" ]]; then
+  IFS=: read -r -a SEARCH_ROOTS <<< "$RUNVAULT_REFRESH_SEARCH_ROOTS"
+fi
 
-log() { printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"; }
+started_at=""
+LAST_LOG_LINE=""
+LAST_FATAL_LINE=""
+LOCK="${TMPDIR:-/tmp}/runvault-refresh.lock"
+LOCK_ACQUIRED=0
+WRITE_STATUS=1
+binary_commit=""
+source_head=""
+failed=()
+warnings=()
 
-# Say so before anything can block. Until 2026-09-07 the first line this script
-# wrote came after the first repository had finished syncing, so a stall before
-# that point left no trace at all: a run that started at 5:30 and did nothing
-# until 8:58 opened its log with an 8:58 timestamp and read as a job that had
-# merely started late (MYTASK-3215).
-log "starting (pid $$)"
+log() {
+  LAST_LOG_LINE="$*"
+  if [[ "$LAST_LOG_LINE" == FATAL:* ]]; then
+    LAST_FATAL_LINE="$LAST_LOG_LINE"
+  fi
+  printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$LAST_LOG_LINE"
+}
+
+warn() {
+  warnings+=("$*")
+  log "WARNING: $*"
+}
+
+iso_time() {
+  local value
+  value="$(date '+%Y-%m-%dT%H:%M:%S%z')"
+  printf '%s:%s' "${value%??}" "${value: -2}"
+}
+
+json_escape() {
+  local value="$1"
+  local char code i
+  for ((i = 0; i < ${#value}; i++)); do
+    char="${value:i:1}"
+    case "$char" in
+      '"') printf '\\"' ;;
+      \\) printf '\\\\' ;;
+      $'\b') printf '\\b' ;;
+      $'\f') printf '\\f' ;;
+      $'\n') printf '\\n' ;;
+      $'\r') printf '\\r' ;;
+      $'\t') printf '\\t' ;;
+      *)
+        printf -v code '%d' "'$char"
+        if (( code >= 0 && code < 32 )); then
+          printf '\\u%04x' "$code"
+        else
+          printf '%s' "$char"
+        fi
+        ;;
+    esac
+  done
+}
+
+json_string() {
+  printf '"'
+  json_escape "$1"
+  printf '"'
+}
+
+json_array() {
+  local separator=""
+  local value
+  printf '['
+  for value in "$@"; do
+    printf '%s' "$separator"
+    json_string "$value"
+    separator=","
+  done
+  printf ']'
+}
+
+write_status() {
+  local exit_code="$1"
+  local outcome="$2"
+  local message="$3"
+  local finished_at="$4"
+  local directory temporary
+  directory="$(dirname "$RUNVAULT_REFRESH_STATUS")"
+  temporary="${RUNVAULT_REFRESH_STATUS}.tmp.$$"
+
+  if ! mkdir -p "$directory" 2>/dev/null; then
+    log "WARNING: could not create the refresh status directory: $directory"
+    return
+  fi
+
+  if ! {
+    printf '{\n  "schema": "runvault-refresh-status/1",\n'
+    printf '  "started_at": '; json_string "$started_at"; printf ',\n'
+    printf '  "finished_at": '; json_string "$finished_at"; printf ',\n'
+    printf '  "exit_code": %d,\n' "$exit_code"
+    printf '  "outcome": '; json_string "$outcome"; printf ',\n'
+    printf '  "failed_repos": '
+    if (( ${#failed[@]} > 0 )); then json_array "${failed[@]}"; else printf '[]'; fi
+    printf ',\n'
+    printf '  "warnings": '
+    if (( ${#warnings[@]} > 0 )); then json_array "${warnings[@]}"; else printf '[]'; fi
+    printf ',\n'
+    printf '  "message": '; json_string "$message"; printf ',\n'
+    if [[ -n "$binary_commit" ]]; then
+      printf '  "binary_commit": '; json_string "$binary_commit"; printf ',\n'
+    else
+      printf '  "binary_commit": null,\n'
+    fi
+    if [[ -n "$source_head" ]]; then
+      printf '  "source_head": '; json_string "$source_head"; printf ',\n'
+    else
+      printf '  "source_head": null,\n'
+    fi
+    printf '  "log": '; json_string "$RUNVAULT_REFRESH_LOG"; printf '\n}\n'
+  } > "$temporary"; then
+    log "WARNING: could not write refresh status: $RUNVAULT_REFRESH_STATUS"
+    rm -f "$temporary"
+    return
+  fi
+  if ! mv "$temporary" "$RUNVAULT_REFRESH_STATUS"; then
+    log "WARNING: could not replace refresh status: $RUNVAULT_REFRESH_STATUS"
+    rm -f "$temporary"
+  fi
+}
 
 # A wall-clock limit for every runvault call. macOS ships neither timeout(1) nor
 # gtimeout, so it is built here.
@@ -73,6 +196,78 @@ run_limited() {
   wait "$pid"
 }
 
+notify() {
+  local title="$1"
+  local message="$2"
+  local rc
+  if [[ -n "${RUNVAULT_REFRESH_NOTIFY_CMD:-}" ]]; then
+    run_limited 10 "$RUNVAULT_REFRESH_NOTIFY_CMD" "$title" "$message" >/dev/null 2>&1
+  else
+    run_limited 10 osascript \
+      -e 'on run argv' \
+      -e 'display notification (item 2 of argv) with title (item 1 of argv)' \
+      -e 'end run' \
+      "$title" "$message" >/dev/null 2>&1
+  fi
+  rc=$?
+  if (( rc != 0 )); then
+    log "WARNING: refresh notification failed (exit $rc)"
+  fi
+}
+
+# One exit path owns the status snapshot as well as lock cleanup. Before
+# MYTASK-3379 the log was the only evidence that this unattended job failed,
+# so a failure could repeat every morning without reaching the dashboard or the
+# user. The original exit code always wins over reporting failures here.
+on_exit() {
+  local exit_code=$?
+  local outcome message finished_at title
+  trap - EXIT
+
+  if (( exit_code != 0 )); then
+    outcome="failed"
+    title="runvault refresh failed"
+  elif (( ${#warnings[@]} > 0 )); then
+    outcome="warn"
+    title="runvault refresh: warning"
+  else
+    outcome="ok"
+    title=""
+  fi
+
+  # A clean exit's last line is "all done", which is what a warning would
+  # otherwise put in the notification: say what the warning was instead.
+  if [[ "$outcome" == "warn" ]]; then
+    message="${warnings[0]}"
+    if (( ${#warnings[@]} > 1 )); then
+      message="$message (+$(( ${#warnings[@]} - 1 )) more)"
+    fi
+  else
+    message="${LAST_FATAL_LINE:-$LAST_LOG_LINE}"
+  fi
+  finished_at="$(iso_time)"
+  if (( WRITE_STATUS )); then
+    write_status "$exit_code" "$outcome" "$message" "$finished_at"
+    if [[ "$outcome" != "ok" && "$RUNVAULT_REFRESH_NOTIFY" != "0" ]]; then
+      notify "$title" "$message"
+    fi
+  fi
+  if (( LOCK_ACQUIRED )); then
+    rm -rf "$LOCK"
+  fi
+  exit "$exit_code"
+}
+
+trap on_exit EXIT
+started_at="$(iso_time)"
+
+# Say so before anything can block. Until 2026-09-07 the first line this script
+# wrote came after the first repository had finished syncing, so a stall before
+# that point left no trace at all: a run that started at 5:30 and did nothing
+# until 8:58 opened its log with an 8:58 timestamp and read as a job that had
+# merely started late (MYTASK-3215).
+log "starting (pid $$)"
+
 # Generous on purpose: these catch a hang, not slowness. The longest real stage
 # is `query --refresh` at about 40s over 1,200 runs. Overridable from the
 # environment so that the timeout path can be exercised without waiting for it.
@@ -98,6 +293,47 @@ if [[ ! -x "$RUNVAULT" ]]; then
   exit 1
 fi
 
+# A successful command is not enough here: the installed CLI may predate the
+# input format currently written by the source tree. That exact mismatch went
+# unnoticed for 18 daily runs because each failure only reached the log
+# (MYTASK-3379).
+binary_version="$(run_limited 10 "$RUNVAULT" --version 2>/dev/null)"
+version_rc=$?
+commit_pattern='commit[[:space:]]([0-9a-f]+)(-dirty)?[)]'
+if (( version_rc == 0 )) \
+  && [[ "$binary_version" =~ $commit_pattern ]] \
+  && (( ${#BASH_REMATCH[1]} == 40 )); then
+  binary_commit="${BASH_REMATCH[1]}"
+  binary_dirty="${BASH_REMATCH[2]:-}"
+else
+  binary_dirty=""
+  warn "binary does not report its commit; reinstall with tools/install_cli.sh"
+fi
+
+candidate_head="$(git -C "$RUNVAULT_SOURCE_REPO" rev-parse HEAD 2>/dev/null || true)"
+if [[ "$candidate_head" =~ ^[0-9a-f]+$ ]] && (( ${#candidate_head} == 40 )); then
+  source_head="$candidate_head"
+fi
+
+if [[ -n "$binary_commit" && -n "$source_head" && "$binary_commit" != "$source_head" ]]; then
+  if git -C "$RUNVAULT_SOURCE_REPO" cat-file -e "${binary_commit}^{commit}" 2>/dev/null; then
+    behind="$(git -C "$RUNVAULT_SOURCE_REPO" rev-list --count "${binary_commit}..${source_head}" 2>/dev/null || true)"
+    if [[ "$behind" =~ ^[0-9]+$ ]] && (( behind > 0 )); then
+      warn "binary ${binary_commit:0:7} is $behind commits behind HEAD ${source_head:0:7}"
+    else
+      warn "binary ${binary_commit:0:7} differs from HEAD ${source_head:0:7}"
+    fi
+  else
+    warn "binary ${binary_commit:0:7} is unknown to this repository (HEAD ${source_head:0:7})"
+  fi
+fi
+if [[ -n "$binary_dirty" ]]; then
+  warn "binary was built from a dirty worktree"
+fi
+if (( ${#warnings[@]} > 0 )); then
+  log "reinstall: tools/install_cli.sh"
+fi
+
 if [[ ! -f "$VAULT/runvault-vault.toml" ]]; then
   # sync would refuse anyway (it is fail-closed on the declaration), but saying
   # so here names the actual problem instead of repeating it once per repo.
@@ -112,7 +348,6 @@ fi
 # is what left 464 runs unsynced in the first place.
 #
 # mkdir is the lock because it is atomic on every filesystem this will meet.
-LOCK="${TMPDIR:-/tmp}/runvault-refresh.lock"
 
 # How long a live holder may hold the lock before it is called stuck rather than
 # busy. A refresh takes about a minute.
@@ -134,6 +369,7 @@ if ! mkdir "$LOCK" 2>/dev/null; then
       exit 1
     fi
     log "another refresh is running (pid $holder, holding for ${held_min}m); exiting without doing anything"
+    WRITE_STATUS=0
     exit 0
   fi
   # The holder is gone: a previous run was killed before it could clean up.
@@ -142,9 +378,7 @@ if ! mkdir "$LOCK" 2>/dev/null; then
   mkdir "$LOCK" || { log "FATAL: cannot take the lock at $LOCK"; exit 1; }
 fi
 echo $$ > "$LOCK/pid"
-trap 'rm -rf "$LOCK"' EXIT
-
-failed=()
+LOCK_ACQUIRED=1
 synced=0
 empty=0
 
@@ -174,7 +408,7 @@ for root in "${SEARCH_ROOTS[@]}"; do
     if (( rc == 124 )); then
       abort_wedged "gc for $repo_id" "$LIMIT_GC"
     elif (( rc != 0 )); then
-      log "WARNING: gc failed for $repo_id (continuing to sync)"
+      warn "gc failed for $repo_id (continuing to sync)"
     fi
 
     # One repository failing must not take the others down with it. That is the
