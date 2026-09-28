@@ -81,6 +81,8 @@ case "${1:-}" in
       printf 'skip run.json: fixture rejected\n'
       exit 1
     fi
+    printf 'scratch 0 件（送らない）\n'
+    printf 'dirty な本番 run: %s 件\n' "${STUB_DIRTY:-0}"
     printf '1 run を同期しました\n'
     ;;
   query)
@@ -277,6 +279,20 @@ test_japanese_message_survives_launchd_environment() {
   ' "$dir/status.json"
 }
 
+test_dirty_production_runs_warn_without_failing() {
+  local dir
+  dir="$(make_case dirty)"
+  run_refresh "$dir" STUB_DIRTY=2
+  local rc=$?
+  (( rc == 0 )) || return 1
+  grep -q 'repo-ok: dirty な本番 run が 2 件あります' "$dir/stdout" || return 1
+  "$NODE" -e '
+    const value = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+    if (value.exit_code !== 0 || value.failed_repos.length !== 0) process.exit(1);
+    if (!value.warnings.some((w) => w.includes("dirty な本番 run が 2 件"))) process.exit(1);
+  ' "$dir/status.json"
+}
+
 test_source_repo_is_temporary_git_repo() {
   [[ "$SOURCE_REPO" == "$TEST_ROOT"/* ]] || return 1
   [[ "$(git -C "$SOURCE_REPO" rev-parse HEAD)" == "$SOURCE_HEAD" ]]
@@ -290,6 +306,7 @@ run_test 'live lock leaves the prior status untouched' test_live_lock_preserves_
 run_test 'fatal message is escaped into valid JSON' test_fatal_message_is_json_safe
 run_test 'Japanese message survives the launchd environment' test_japanese_message_survives_launchd_environment
 run_test 'source comparison uses a temporary git repository' test_source_repo_is_temporary_git_repo
+run_test 'dirty production runs warn without failing' test_dirty_production_runs_warn_without_failing
 
 printf '%d passed; %d failed\n' "$PASS" "$FAIL"
 (( FAIL == 0 ))

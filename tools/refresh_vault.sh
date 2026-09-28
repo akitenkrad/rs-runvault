@@ -425,6 +425,14 @@ for root in "${SEARCH_ROOTS[@]}"; do
       abort_wedged "sync for $repo_id" "$LIMIT_SYNC"
     elif (( rc == 0 )); then
       n="$(printf '%s\n' "$out" | sed -n 's/^\([0-9][0-9]*\) run.*同期しました.*/\1/p' | tail -1)"
+      # A production run made from a dirty tree is usually a development run
+      # that should have been made with --scratch (MYTASK-3380). Say so here,
+      # where it is seen the next morning, instead of only at the terminal that
+      # made it -- which is often a subagent's.
+      dirty="$(printf '%s\n' "$out" | sed -n 's/^dirty な本番 run: \([0-9][0-9]*\) 件.*/\1/p' | tail -1)"
+      if [[ -n "$dirty" && "$dirty" != "0" ]]; then
+        warn "$repo_id: dirty な本番 run が $dirty 件あります（開発中の試行なら --scratch で作るべきもの）"
+      fi
       if [[ -z "$n" ]]; then
         # The summary line changed shape. Do not guess a number.
         log "synced $repo_id (run count not parsed)"
