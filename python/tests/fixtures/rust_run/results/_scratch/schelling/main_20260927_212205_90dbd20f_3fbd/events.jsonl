@@ -1,0 +1,2 @@
+{"moved":true,"run_uid":"01M3HD1ETNKQWDTJHHG54WQWJY","schema":"observation","t":3,"t_unit":"step","ts":"2026-09-27T21:22:05.512285+09:00","unit_id":"a0042"}
+{"budget":100,"censored":false,"outcome":"settled","run_uid":"01M3HD1ETNKQWDTJHHG54WQWJY","schema":"terminal","t":3,"t_unit":"step","ts":"2026-09-27T21:22:05.512358+09:00","unit_id":"a0042"}

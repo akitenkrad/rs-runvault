@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/akitenkrad/rs-runvault/schema/v1/tombstone.json",
+  "title": "runvault deletion tombstone",
+  "description": "runvault delete が追記する削除記録．1 行を _deleted.jsonl の 1 レコードとして保存する",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_uid",
+    "repo_id",
+    "experiment",
+    "run_slug",
+    "state",
+    "deleted_at",
+    "host",
+    "reason",
+    "runvault_version"
+  ],
+  "properties": {
+    "schema_version": { "type": "string", "const": "1.0" },
+    "run_uid": { "$ref": "common.json#/$defs/run_uid" },
+    "repo_id": { "$ref": "common.json#/$defs/slug" },
+    "experiment": { "$ref": "common.json#/$defs/slug" },
+    "run_slug": { "$ref": "common.json#/$defs/run_slug" },
+    "state": { "enum": ["finished", "failed"] },
+    "deleted_at": { "$ref": "common.json#/$defs/timestamp" },
+    "host": { "$ref": "common.json#/$defs/nonempty" },
+    "reason": { "$ref": "common.json#/$defs/nonempty" },
+    "runvault_version": { "$ref": "common.json#/$defs/nonempty" }
+  },
+  "examples": [
+    {
+      "schema_version": "1.0",
+      "run_uid": "01M3ETCP0B2D8TJGBBMW8W7DD5",
+      "repo_id": "argyle2023",
+      "experiment": "argyle",
+      "run_slug": "generate_20260926_211741_9770aa8f_1c06",
+      "state": "failed",
+      "deleted_at": "2026-09-27T20:45:00+09:00",
+      "host": "Mac-mini-3.local",
+      "reason": "開発中の試行",
+      "runvault_version": "0.1.0"
+    }
+  ]
+}

@@ -35,6 +35,7 @@ SCHEMAS = [
     "reference.row.json",
     "manifest.row.json",
     "sync.json",
+    "tombstone.json",
     "runs.report.json",
     "vault.config.json",
 ]

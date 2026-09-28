@@ -53,6 +53,7 @@ pub struct RunOptions {
     repo_id: Option<String>,
     domain: Option<String>,
     results_root: PathBuf,
+    scratch: bool,
     parameters: Value,
     control: RunvaultBlock,
     data: Vec<Dataset>,
@@ -82,6 +83,7 @@ impl RunOptions {
             repo_id: None,
             domain: None,
             results_root: PathBuf::from("results"),
+            scratch: false,
             parameters: Value::Object(Map::new()),
             control: RunvaultBlock::default(),
             data: Vec::new(),
@@ -118,6 +120,12 @@ impl RunOptions {
     /// Where `<experiment>/<run_slug>/` goes. Defaults to `results`.
     pub fn results_root(mut self, root: impl Into<PathBuf>) -> Self {
         self.results_root = root.into();
+        self
+    }
+
+    /// Keep this run below `<results_root>/_scratch`, outside sync and indexing.
+    pub fn scratch(mut self, scratch: bool) -> Self {
+        self.scratch = scratch;
         self
     }
 
@@ -330,6 +338,9 @@ impl RunOptions {
             .domain
             .as_deref()
             .ok_or_else(|| Error::spec("domain が必要です (RunOptions::domain)"))?;
+        if self.experiment == crate::paths::SCRATCH_DIR {
+            return Err(Error::spec("experiment 名 `_scratch` は予約されています"));
+        }
         ids::validate_slug("repo_id", repo_id)?;
         ids::validate_slug("experiment", &self.experiment)?;
         ids::validate_slug("subcommand", &self.subcommand)?;
@@ -508,8 +519,12 @@ impl Run {
 
         let run_uid = ids::new_run_uid(now);
         let timestamp = ids::timestamp_part(now);
-        let experiment_dir =
-            crate::paths::experiment_dir(&options.results_root, &options.experiment);
+        let experiment_root = if options.scratch {
+            options.results_root.join(crate::paths::SCRATCH_DIR)
+        } else {
+            options.results_root.clone()
+        };
+        let experiment_dir = crate::paths::experiment_dir(&experiment_root, &options.experiment);
         let (dir, run_slug, collision_index) = create_run_dir(
             &experiment_dir,
             &options.subcommand,
@@ -573,6 +588,13 @@ impl Run {
                 return Err(e);
             }
         };
+
+        if !options.scratch && meta.code.as_ref().is_some_and(|code| code.git_dirty) {
+            eprintln!(
+                "runvault: 未コミットの変更がある状態で本番の run を作りました ({run_slug})．\n\
+                 \x20         開発中の試行なら --scratch を付けてください．この run は集約先へ送られます．"
+            );
+        }
 
         Ok(Self {
             dir,

@@ -37,6 +37,19 @@ def _run_dir() -> Path:
     return found[0]
 
 
+def _scratch_run_dir() -> Path:
+    found = sorted(
+        d for d in FIXTURES.glob("_scratch/*/*")
+        if not d.is_symlink() and (d / "run.json").is_file()
+    )
+    if not found:
+        pytest.fail(
+            f"no scratch fixture under {FIXTURES}; regenerate with "
+            "`cargo run -p runvault --example write_fixture`"
+        )
+    return found[0]
+
+
 @pytest.fixture(scope="module")
 def rust_run() -> Path:
     return _run_dir()
@@ -69,6 +82,13 @@ def test_the_directory_name_still_carries_the_hashes(rust_run: Path, meta: dict)
     _, _, cfg8, exec4 = rust_run.name.rsplit("_", 3)
     assert meta["config_hash"].startswith(cfg8)
     assert meta["execution_hash"].startswith(exec4)
+
+
+def test_rust_uses_the_same_scratch_path_shape_as_python() -> None:
+    scratch_run = _scratch_run_dir()
+    meta = json.loads((scratch_run / "run.json").read_text(encoding="utf-8"))
+    assert scratch_run.parent.name == meta["experiment"]
+    assert scratch_run.parent.parent.name == "_scratch"
 
 
 def test_the_light_half_is_all_present(rust_run: Path) -> None:

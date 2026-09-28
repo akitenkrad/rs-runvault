@@ -70,6 +70,29 @@ fn private_vault() -> tempfile::TempDir {
     dir
 }
 
+fn git_repo() -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    let git = |args: &[&str]| {
+        let output = Command::new("git")
+            .args(args)
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+    git(&["init", "-q"]);
+    git(&["config", "user.email", "t@example.com"]);
+    git(&["config", "user.name", "t"]);
+    std::fs::write(dir.path().join("tracked.txt"), "clean").unwrap();
+    git(&["add", "-A"]);
+    git(&["commit", "-qm", "first"]);
+    dir
+}
+
 /// A finished run with an artifact, so `manifest.csv` has something to cover.
 fn finished_run(results: &Path) -> PathBuf {
     let mut run = Run::start(
@@ -91,6 +114,45 @@ fn finished_run(results: &Path) -> PathBuf {
     run.log_metric("segregation_index", 0.83).send().unwrap();
     run.finish().unwrap();
     dir
+}
+
+fn failed_run(results: &Path) -> PathBuf {
+    Run::start(
+        RunOptions::new("schelling", "main")
+            .repo_id(REPO_ID)
+            .domain("other")
+            .origin(Origin::Manual)
+            .visibility(Visibility::Public)
+            .results_root(results),
+    )
+    .unwrap()
+    .fail("test", "expected failure")
+    .unwrap()
+}
+
+fn tree(root: &Path) -> Vec<String> {
+    let mut paths = Vec::new();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        if !dir.is_dir() {
+            continue;
+        }
+        for entry in std::fs::read_dir(&dir).unwrap() {
+            let entry = entry.unwrap();
+            let path = entry.path();
+            paths.push(
+                path.strip_prefix(root)
+                    .unwrap()
+                    .to_string_lossy()
+                    .to_string(),
+            );
+            if entry.file_type().unwrap().is_dir() {
+                stack.push(path);
+            }
+        }
+    }
+    paths.sort();
+    paths
 }
 
 fn run_slug(dir: &Path) -> String {
@@ -178,6 +240,69 @@ fn the_cli_finds_verifies_and_sweeps_runs() {
     let (ok, stdout) = runvault(&["gc", "--results-root", &root]);
     assert!(ok);
     assert!(stdout.contains("0 件が異常終了"), "{stdout}");
+}
+
+#[test]
+fn path_looks_in_exactly_one_of_production_and_scratch() {
+    let results = tempfile::tempdir().unwrap();
+    let production = Run::start(
+        RunOptions::new("schelling", "main")
+            .repo_id("r")
+            .domain("other")
+            .origin(Origin::Manual)
+            .results_root(results.path()),
+    )
+    .unwrap();
+    let production_dir = production.finish().unwrap();
+    let scratch = Run::start(
+        RunOptions::new("schelling", "main")
+            .repo_id("r")
+            .domain("other")
+            .origin(Origin::Manual)
+            .results_root(results.path())
+            .scratch(true),
+    )
+    .unwrap();
+    let scratch_dir = scratch.finish().unwrap();
+    let root = results.path().to_string_lossy().to_string();
+    let run = |extra: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_runvault"))
+            .args([
+                "path",
+                "--results-root",
+                &root,
+                "--experiment",
+                "schelling",
+                "--latest",
+            ])
+            .args(extra)
+            .output()
+            .unwrap()
+    };
+
+    let production_out = run(&[]);
+    assert!(production_out.status.success());
+    assert_eq!(
+        PathBuf::from(String::from_utf8_lossy(&production_out.stdout).trim()),
+        std::fs::canonicalize(production_dir).unwrap()
+    );
+
+    let scratch_out = run(&["--scratch"]);
+    assert!(scratch_out.status.success());
+    assert_eq!(
+        PathBuf::from(String::from_utf8_lossy(&scratch_out.stdout).trim()),
+        std::fs::canonicalize(scratch_dir).unwrap()
+    );
+
+    let bypass = Command::new(env!("CARGO_BIN_EXE_runvault"))
+        .args(["path", "--results-root", &root, "--experiment", "_scratch"])
+        .output()
+        .unwrap();
+    assert!(
+        bypass.stdout.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&bypass.stdout)
+    );
 }
 
 #[test]
@@ -324,6 +449,58 @@ fn the_command_shows_what_would_enter_the_repository_before_it_does() {
 }
 
 #[test]
+fn sync_dry_run_reports_scratch_and_dirty_production_counts() {
+    let results = tempfile::tempdir().unwrap();
+    let vault = private_vault();
+
+    let repo = git_repo();
+    std::fs::write(repo.path().join("tracked.txt"), "dirty").unwrap();
+    let production = Run::start(
+        RunOptions::new("schelling", "main")
+            .repo_id(REPO_ID)
+            .domain("other")
+            .visibility(Visibility::Public)
+            .results_root(results.path())
+            .repo_root(repo.path()),
+    )
+    .unwrap();
+    production.finish().unwrap();
+
+    let scratch = Run::start(
+        RunOptions::new("schelling", "main")
+            .repo_id(REPO_ID)
+            .domain("other")
+            .origin(Origin::Manual)
+            .results_root(results.path())
+            .scratch(true),
+    )
+    .unwrap();
+    scratch.finish().unwrap();
+    let fragment = results
+        .path()
+        .join("_scratch/schelling/main_20240115_101500");
+    std::fs::create_dir_all(&fragment).unwrap();
+    std::fs::write(fragment.join("metrics.csv"), "t,value\n0,1\n").unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_runvault"))
+        .args(["sync", "--dry-run", "--allow-internal"])
+        .args(["--results-root", &results.path().to_string_lossy()])
+        .args(["--repo-id", REPO_ID])
+        .args(["--vault", &vault.path().to_string_lossy()])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "{stdout}\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(stdout.contains("scratch 2 件（送らない）"), "{stdout}");
+    assert!(stdout.contains("dirty な本番 run: 1 件"), "{stdout}");
+    assert_eq!(stdout.matches("would send").count(), 1, "{stdout}");
+}
+
+#[test]
 fn the_command_fails_when_a_run_could_not_be_verified() {
     let results = tempfile::tempdir().unwrap();
     let vault = private_vault();
@@ -344,6 +521,164 @@ fn the_command_fails_when_a_run_could_not_be_verified() {
         "{}",
         String::from_utf8_lossy(&out.stdout)
     );
+}
+
+#[test]
+fn delete_without_yes_is_a_preview_and_yes_deletes_in_the_documented_locations() {
+    let results = tempfile::tempdir().unwrap();
+    let vault = private_vault();
+    let source = failed_run(results.path());
+    let meta = read_json(&source.join("run.json"));
+    let uid = meta["run_uid"].as_str().unwrap();
+    let slug = meta["run_slug"].as_str().unwrap();
+    let sync = Command::new(env!("CARGO_BIN_EXE_runvault"))
+        .args(["sync", "--allow-internal"])
+        .args(["--results-root", &results.path().to_string_lossy()])
+        .args(["--repo-id", REPO_ID])
+        .args(["--vault", &vault.path().to_string_lossy()])
+        .output()
+        .unwrap();
+    assert!(
+        sync.status.success(),
+        "{}",
+        String::from_utf8_lossy(&sync.stderr)
+    );
+    let before = (tree(results.path()), tree(vault.path()));
+
+    let run_delete = |yes: bool| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_runvault"));
+        command
+            .arg("delete")
+            .args(["--results-root", &results.path().to_string_lossy()])
+            .args(["--repo-id", REPO_ID])
+            .args(["--vault", &vault.path().to_string_lossy()])
+            .args(["--run-uid", uid])
+            .args(["--reason", "開発中の試行"]);
+        if yes {
+            command.arg("--yes");
+        }
+        command.output().unwrap()
+    };
+
+    let preview = run_delete(false);
+    let preview_out = String::from_utf8_lossy(&preview.stdout);
+    assert!(preview.status.success(), "{preview_out}");
+    assert!(preview_out.contains(uid), "{preview_out}");
+    assert!(preview_out.contains(slug), "{preview_out}");
+    assert!(preview_out.contains("元: ある"), "{preview_out}");
+    assert!(preview_out.contains("集約先: ある"), "{preview_out}");
+    assert_eq!(before, (tree(results.path()), tree(vault.path())));
+
+    let deleted = run_delete(true);
+    let deleted_out = String::from_utf8_lossy(&deleted.stdout);
+    assert!(
+        deleted.status.success(),
+        "{deleted_out}\n{}",
+        String::from_utf8_lossy(&deleted.stderr)
+    );
+    assert!(!source.exists());
+    assert!(
+        !vault
+            .path()
+            .join(REPO_ID)
+            .join("schelling")
+            .join(uid)
+            .exists()
+    );
+    assert!(vault.path().join(REPO_ID).join("_deleted.jsonl").is_file());
+    let tombstone =
+        std::fs::read_to_string(vault.path().join(REPO_ID).join("_deleted.jsonl")).unwrap();
+    assert_valid(
+        "tombstone",
+        &serde_json::from_str(tombstone.trim()).unwrap(),
+    );
+    assert!(
+        deleted_out.contains("runvault query --refresh"),
+        "{deleted_out}"
+    );
+    assert!(
+        deleted_out.contains("runvault report --obsidian"),
+        "{deleted_out}"
+    );
+}
+
+#[test]
+fn delete_requires_a_reason_and_a_non_slug_selection() {
+    let vault = private_vault();
+    let missing_reason = Command::new(env!("CARGO_BIN_EXE_runvault"))
+        .args([
+            "delete",
+            "--repo-id",
+            REPO_ID,
+            "--run-uid",
+            "01K3QZ8F7H9M2N4P6R8T0V2X4Z",
+        ])
+        .args(["--vault", &vault.path().to_string_lossy()])
+        .output()
+        .unwrap();
+    assert!(!missing_reason.status.success());
+
+    let slug = Command::new(env!("CARGO_BIN_EXE_runvault"))
+        .args([
+            "delete",
+            "--repo-id",
+            REPO_ID,
+            "--run-slug",
+            "main_20260927_120000_deadbeef_cafe",
+        ])
+        .args(["--reason", "reason"])
+        .args(["--vault", &vault.path().to_string_lossy()])
+        .output()
+        .unwrap();
+    assert!(!slug.status.success());
+}
+
+#[test]
+fn sync_prints_the_tombstone_skip_in_dry_run_and_normal_mode_without_failing() {
+    let results = tempfile::tempdir().unwrap();
+    let vault = private_vault();
+    let source = failed_run(results.path());
+    let meta = read_json(&source.join("run.json"));
+    let uid = meta["run_uid"].as_str().unwrap();
+    let slug = meta["run_slug"].as_str().unwrap();
+    let deletion = runvault::delete::plan(
+        results.path(),
+        vault.path(),
+        REPO_ID,
+        runvault::delete::Selection::RunUids(vec![uid.into()]),
+        "reason",
+        false,
+    )
+    .unwrap()
+    .remove(0);
+    let _ = runvault::delete::execute_with_hook(&deletion, |stage| {
+        if stage == runvault::delete::DeleteStage::Tombstone {
+            Err(runvault::Error::Spec("stop".into()))
+        } else {
+            Ok(())
+        }
+    });
+
+    for extra in [Some("--dry-run"), None] {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_runvault"));
+        command
+            .arg("sync")
+            .args(["--results-root", &results.path().to_string_lossy()])
+            .args(["--repo-id", REPO_ID])
+            .args(["--vault", &vault.path().to_string_lossy()]);
+        if let Some(extra) = extra {
+            command.arg(extra);
+        }
+        let output = command.output().unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(output.status.success(), "{stdout}");
+        assert!(
+            stdout
+                .lines()
+                .any(|line| line == format!("削除済みのため送らない: {slug}")),
+            "{stdout}"
+        );
+    }
 }
 
 #[test]

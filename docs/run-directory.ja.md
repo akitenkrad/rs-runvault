@@ -21,6 +21,10 @@
 
 `<results_root>` の既定値は `results`．experiment ディレクトリには最後に完了した run を指す `latest_finished` シンボリックリンクが置かれ，実行中の run は `.runvault.lock` を持つ．
 
+`RunOptions::scratch(true)` は置き場所だけを `<results_root>/_scratch/<experiment>/<run_slug>/` に変える．scratch かどうかは run の同一性に入らず，slug とハッシュは本番 run と全く同じように計算する．ディレクトリを本番の experiment ツリーへ移せば，次の `sync` で昇格できる．2 つのツリーを混同しないよう，experiment 名 `_scratch` は予約されている．
+
+コード由来の本番 run を dirty な Git 作業ツリーから作ると，標準エラーへ警告する．scratch run，clean な作業ツリー，コード来歴を持たない run では警告しない．開発中の試行は本番ツリーへ残さず，`RunOptions::scratch(true)` を指定する．
+
 ## 各ファイル
 
 ### `run.json`

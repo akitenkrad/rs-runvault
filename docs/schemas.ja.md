@@ -17,6 +17,7 @@
 | `event.json` | `events.jsonl` の 1 行 |
 | `status.json` | `status.json` |
 | `sync.json` | 同期先の run ディレクトリに残る受領証 |
+| `tombstone.json` | `<vault>/<repo_id>/_deleted.jsonl` に追記する 1 行 |
 | `vault.config.json` | 集約リポジトリの宣言 `runvault-vault.toml` |
 | `metrics.declaration.json` | `runvault.toml` と，run へ写した `metrics.meta.json` |
 | `index.columns.json` | 9 つの parquet テーブルの平坦化された列定義 |

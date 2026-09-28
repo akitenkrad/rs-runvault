@@ -719,6 +719,95 @@ fn one_scan_finds_both_kinds_and_counts_each_once() {
     assert_eq!(plans.iter().filter(|p| p.run_uid.is_none()).count(), 1);
 }
 
+#[test]
+fn scratch_runs_and_run_json_less_fragments_are_not_planned() {
+    let results = tempfile::tempdir().unwrap();
+    let vault = private_vault();
+    let run = Run::start(
+        RunOptions::new("schelling", "main")
+            .repo_id(REPO_ID)
+            .domain("other")
+            .origin(Origin::Manual)
+            .visibility(Visibility::Public)
+            .results_root(results.path())
+            .scratch(true),
+    )
+    .unwrap();
+    run.finish().unwrap();
+
+    let fragment = results
+        .path()
+        .join("_scratch/schelling/main_20240115_101500");
+    std::fs::create_dir_all(&fragment).unwrap();
+    std::fs::write(fragment.join("config.json"), r#"{"rows": 13}"#).unwrap();
+    std::fs::write(fragment.join("metrics.csv"), "t,value\n0,1\n").unwrap();
+
+    let planned = sync::plan_all(results.path(), REPO_ID, vault.path(), &options(true)).unwrap();
+    assert!(planned.is_empty(), "{planned:?}");
+}
+
+#[test]
+fn moving_a_scratch_run_promotes_it_to_the_next_sync() {
+    let results = tempfile::tempdir().unwrap();
+    let vault = private_vault();
+    let run = Run::start(
+        RunOptions::new("schelling", "main")
+            .repo_id(REPO_ID)
+            .domain("other")
+            .origin(Origin::Manual)
+            .visibility(Visibility::Public)
+            .results_root(results.path())
+            .scratch(true),
+    )
+    .unwrap();
+    let scratch_dir = run.finish().unwrap();
+    let promoted = results
+        .path()
+        .join("schelling")
+        .join(scratch_dir.file_name().unwrap());
+    std::fs::create_dir_all(promoted.parent().unwrap()).unwrap();
+    std::fs::rename(&scratch_dir, &promoted).unwrap();
+
+    let planned = sync::plan_all(results.path(), REPO_ID, vault.path(), &options(true)).unwrap();
+    assert_eq!(planned.len(), 1);
+    assert_eq!(sent(planned.into_iter().next().unwrap()).run_dir, promoted);
+}
+
+#[test]
+fn a_tombstoned_run_is_skipped_without_turning_sync_into_an_error() {
+    let results = tempfile::tempdir().unwrap();
+    let vault = private_vault();
+    let run = killed_run(results.path());
+    let meta: runvault::RunMeta = serde_json::from_value(read_json(&run.join("run.json"))).unwrap();
+    let deletion = runvault::delete::plan(
+        results.path(),
+        vault.path(),
+        REPO_ID,
+        runvault::delete::Selection::RunUids(vec![meta.run_uid.clone()]),
+        "開発中の試行",
+        false,
+    )
+    .unwrap()
+    .remove(0);
+    let _ = runvault::delete::execute_with_hook(&deletion, |stage| {
+        if stage == runvault::delete::DeleteStage::Tombstone {
+            Err(runvault::Error::Spec("stop after tombstone".into()))
+        } else {
+            Ok(())
+        }
+    });
+
+    let planned = sync::plan_all(results.path(), REPO_ID, vault.path(), &options(true)).unwrap();
+    assert_eq!(planned.len(), 1);
+    match &planned[0] {
+        Planned::Skipped { reason, .. } => assert_eq!(
+            reason,
+            &format!("削除済みのため送らない: {}", meta.run_slug)
+        ),
+        Planned::Send(_) => panic!("墓標のある run が再送されました"),
+    }
+}
+
 // --- the command -------------------------------------------------------------
 
 #[test]

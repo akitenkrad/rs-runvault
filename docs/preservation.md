@@ -56,6 +56,29 @@ A run that does not declare itself public needs `--allow-internal` (or
 `allow_internal = true` on the destination), and one that fails `verify --deep`
 is not sent at all.
 
+Scratch runs are counted but never copied. A canonical run whose `run_uid` is
+already present in `<vault>/<repo_id>/_deleted.jsonl` is also skipped. This
+tombstone check applies equally to normal and `--dry-run` syncs and is not an
+error.
+
+## `delete`: the only destructive operation
+
+`runvault delete` is the only runvault command that deliberately removes a
+recorded run. It previews by default and requires both an explicit selection and
+`--reason`; only `--yes` changes files. The write order is tombstone, aggregation
+copy, source copy. Repeating the command safely completes work left after an
+interruption, and an already missing side is reported and skipped.
+
+The append-only tombstone is `<vault>/<repo_id>/_deleted.jsonl`. It prevents a
+remaining source copy on another machine from being sent again. It is a record
+that deletion happened, not a secure-erasure mechanism: the aggregation vault
+is tracked by Git, so the deleted run's contents remain in Git history. Removing
+sensitive data from that history requires a separate history rewrite.
+
+Deletion does not rebuild the derived index or dashboard. Run `runvault query
+--refresh` and `runvault report --obsidian` when those views should reflect the
+change.
+
 ## `query`
 
 ```bash

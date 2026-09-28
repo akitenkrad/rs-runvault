@@ -37,7 +37,9 @@ pub struct Reaped {
 /// Sweeps every run under `results_root`.
 pub fn collect(results_root: &Path, dry_run: bool) -> Result<Vec<Reaped>> {
     let mut out = Vec::new();
-    for dir in crate::paths::run_dirs(results_root)? {
+    let mut dirs = crate::paths::run_dirs(results_root)?;
+    dirs.extend(crate::paths::scratch_run_dirs(results_root)?);
+    for dir in dirs {
         if let Some(reaped) = collect_one(&dir, dry_run)? {
             out.push(reaped);
         }

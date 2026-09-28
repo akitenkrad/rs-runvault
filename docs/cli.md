@@ -15,6 +15,7 @@ runvault verify   Check a run directory against the invariants that span its fil
 runvault gc       Turn runs whose process was killed into recorded failures
 runvault legacy   Read run directories written before this specification existed
 runvault sync     Copy the light half of every run to the aggregation repository
+runvault delete   Tombstone and delete explicitly selected runs
 runvault query    Rebuild the index, run SQL against it, or both
 runvault report   Summarize the index for the Obsidian dashboard
 ```
@@ -24,6 +25,7 @@ runvault report   Summarize the index for the Obsidian dashboard
 | | |
 | --- | --- |
 | `runvault path --experiment E --latest` | the last completed run |
+| `runvault path --experiment E --latest --scratch` | the last completed scratch run |
 | `runvault path --experiment E --config-hash 9f2c41ab` | every run of one condition |
 | `runvault path --experiment E --execution-hash 3b1d --finished` | has this exact thing already run? |
 | `runvault path --experiment E --latest --subcommand run` | the latest run of one subcommand |
@@ -34,6 +36,8 @@ runvault report   Summarize the index for the Obsidian dashboard
 | `runvault gc` | record the runs whose process was killed |
 | `runvault sync --repo-id R --vault V --dry-run` | what the aggregation repository would receive |
 | `runvault sync --repo-id R --vault V` | copy the light half of every run into it |
+| `runvault delete --repo-id R --vault V --run-uid U --reason TEXT` | preview deletion of one run |
+| `runvault delete --repo-id R --vault V --run-uid U --reason TEXT --yes` | tombstone and delete it |
 | `runvault query --vault V --refresh` | rebuild `index/*.parquet` from that repository |
 | `runvault query --vault V "SELECT …"` | ask a question across every repository at once |
 | `runvault report --obsidian --vault V -o runs.json` | summarize the index for the dashboard |
@@ -47,6 +51,7 @@ Prints run directories.
 | --- | --- |
 | `--experiment <EXPERIMENT>` | the experiment to look in (required) |
 | `--results-root <RESULTS_ROOT>` | where the experiment directories live (default `results`) |
+| `--scratch` | search `<results-root>/_scratch` instead of the production tree |
 | `--latest` | resolve the `latest_finished` link |
 | `--config-hash <CONFIG_HASH>` | every run whose `config_hash` starts with this prefix — the same condition |
 | `--execution-hash <EXECUTION_HASH>` | every run whose `execution_hash` starts with this prefix |
@@ -111,6 +116,35 @@ runvault sync --repo-id <REPO_ID> --vault <VAULT> [--dry-run] [--allow-internal]
 
 See [preservation](preservation.md) for what is copied and what the destination
 has to declare.
+
+Scratch runs below `results/_scratch/` are never sent. The command reports their
+count in both normal and `--dry-run` modes. If a production run's `run_uid`
+appears in `<vault>/<repo_id>/_deleted.jsonl`, it prints
+`削除済みのため送らない: <slug>` and skips that run without changing the exit
+status.
+
+## `delete`
+
+```bash
+runvault delete --repo-id <REPO_ID> --vault <VAULT> \
+  --run-uid <RUN_UID> [--run-uid <RUN_UID> ...] --reason <TEXT> [--yes]
+runvault delete --repo-id <REPO_ID> --vault <VAULT> \
+  --experiment <EXPERIMENT> --failed --reason <TEXT> [--yes]
+```
+
+The default is a preview: it lists the stable id, slug, and whether the source
+and aggregation copies exist, without changing the file tree. `--yes` writes the
+tombstone first, then removes the aggregation copy and its `by-slug` link, and
+finally removes the source. `--reason` is required. Failed runs are eligible by
+default; a successful (`state = finished`) run additionally requires
+`--include-succeeded`. A live run, a stale lock that still needs `runvault gc`,
+and a legacy run without `run.json` are refused. Selection is by repeated
+`--run-uid`, or by `--experiment … --failed`; a slug is never a selector.
+
+`--results-root`, `--vault`, and `--repo-id` have the same meaning and defaults
+as for `sync`, including discovery of `runvault-vault.toml`. The command does not
+rebuild the index or dashboard; after deletion it prints the explicit follow-up
+commands `runvault query --refresh` and `runvault report --obsidian`.
 
 ## `query`
 

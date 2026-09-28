@@ -157,6 +157,64 @@ fn simulation_options(repo: &Path, results: &Path, cfg: &Value) -> RunOptions {
 }
 
 #[test]
+fn scratch_changes_only_the_run_location_not_its_identity() {
+    let results = tempfile::tempdir().unwrap();
+    let options = || {
+        RunOptions::new("schelling", "main")
+            .repo_id("r")
+            .domain("other")
+            .origin(Origin::Manual)
+            .results_root(results.path())
+            .parameters(&json!({"n": 3}))
+            .unwrap()
+    };
+
+    let production = Run::start(options()).unwrap();
+    let scratch = Run::start(options().scratch(true)).unwrap();
+    let production_meta = read_json(&production.dir().join("run.json"));
+    let scratch_meta = read_json(&scratch.dir().join("run.json"));
+
+    assert_eq!(
+        production.dir().parent().unwrap(),
+        results.path().join("schelling")
+    );
+    assert_eq!(
+        scratch.dir().parent().unwrap(),
+        results.path().join("_scratch/schelling")
+    );
+    assert_eq!(production.run_slug(), scratch.run_slug());
+    assert_eq!(production_meta["config_hash"], scratch_meta["config_hash"]);
+    assert_eq!(
+        production_meta["execution_hash"],
+        scratch_meta["execution_hash"]
+    );
+    assert_eq!(
+        production_meta["env"]["env_hash"],
+        scratch_meta["env"]["env_hash"]
+    );
+
+    production.finish().unwrap();
+    scratch.finish().unwrap();
+}
+
+#[test]
+fn the_scratch_experiment_name_is_reserved() {
+    let results = tempfile::tempdir().unwrap();
+    let err = Run::start(
+        RunOptions::new("_scratch", "main")
+            .repo_id("r")
+            .domain("other")
+            .origin(Origin::Manual)
+            .results_root(results.path()),
+    )
+    .err()
+    .expect("the reserved experiment name was accepted")
+    .to_string();
+    assert!(err.contains("予約"), "{err}");
+    assert!(!results.path().join("_scratch").exists());
+}
+
+#[test]
 fn a_simulation_run_produces_a_directory_every_schema_accepts() {
     let repo = git_repo();
     let results = tempfile::tempdir().unwrap();
@@ -702,6 +760,100 @@ fn what_gc_leaves_behind_can_still_be_preserved() {
 
     assert!(!dir.join("manifest.csv").exists());
     runvault::verify::deep(&dir).unwrap();
+}
+
+#[test]
+fn gc_reaps_a_killed_scratch_run() {
+    let results = tempfile::tempdir().unwrap();
+    let run = Run::start(
+        RunOptions::new("e", "main")
+            .repo_id("r")
+            .domain("other")
+            .origin(Origin::Manual)
+            .results_root(results.path())
+            .scratch(true),
+    )
+    .unwrap();
+    let dir = run.dir().to_path_buf();
+    std::mem::forget(run);
+
+    let mut record: Value = read_json(&dir.join(".runvault.lock"));
+    record["pid"] = json!(0);
+    record["process_start_time"] = json!(1);
+    record["heartbeat_at"] =
+        json!((chrono::Local::now() - chrono::Duration::hours(2)).to_rfc3339());
+    std::fs::write(
+        dir.join(".runvault.lock"),
+        serde_json::to_string(&record).unwrap(),
+    )
+    .unwrap();
+
+    let reaped = runvault::gc::collect(results.path(), false).unwrap();
+    assert_eq!(reaped.len(), 1);
+    assert_eq!(reaped[0].dir, dir);
+    assert_eq!(read_json(&dir.join("status.json"))["state"], "failed");
+}
+
+#[test]
+fn dirty_warning_subprocess_helper() {
+    let Some(mode) = std::env::var_os("RUNVAULT_WARNING_TEST_MODE") else {
+        return;
+    };
+    let repo = PathBuf::from(std::env::var_os("RUNVAULT_WARNING_TEST_REPO").unwrap());
+    let results = PathBuf::from(std::env::var_os("RUNVAULT_WARNING_TEST_RESULTS").unwrap());
+    let mode = mode.to_string_lossy();
+    let mut options = RunOptions::new("e", "main")
+        .repo_id("r")
+        .domain("other")
+        .results_root(results)
+        .repo_root(repo);
+    if mode == "scratch" {
+        options = options.scratch(true);
+    } else if mode == "manual" {
+        options = options.origin(Origin::Manual);
+    }
+    Run::start(options).unwrap().finish().unwrap();
+}
+
+#[test]
+fn only_a_dirty_production_run_warns_on_standard_error() {
+    let run_case = |mode: &str, dirty: bool| {
+        let repo = git_repo();
+        if dirty {
+            std::fs::write(repo.path().join("uncommitted.txt"), "changed").unwrap();
+        }
+        let results = tempfile::tempdir().unwrap();
+        let output = Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "dirty_warning_subprocess_helper", "--nocapture"])
+            .env("RUNVAULT_WARNING_TEST_MODE", mode)
+            .env("RUNVAULT_WARNING_TEST_REPO", repo.path())
+            .env("RUNVAULT_WARNING_TEST_RESULTS", results.path())
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stderr).unwrap()
+    };
+
+    let warning = run_case("production", true);
+    let lines: Vec<_> = warning.lines().collect();
+    assert_eq!(lines.len(), 2, "{warning:?}");
+    assert!(
+        lines[0]
+            .starts_with("runvault: 未コミットの変更がある状態で本番の run を作りました (main_")
+            && lines[0].ends_with(")．"),
+        "{warning}"
+    );
+    assert_eq!(
+        lines[1],
+        "          開発中の試行なら --scratch を付けてください．この run は集約先へ送られます．"
+    );
+    assert_eq!(run_case("scratch", true), "");
+    assert_eq!(run_case("production", false), "");
+    assert_eq!(run_case("manual", true), "");
 }
 
 #[test]

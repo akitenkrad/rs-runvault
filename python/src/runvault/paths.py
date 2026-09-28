@@ -12,14 +12,18 @@ from . import files, lockfile
 __all__ = [
     "LATEST_FINISHED",
     "LINK_MUTEX",
+    "SCRATCH_DIR",
     "experiment_dir",
     "is_run_dir",
     "run_dirs",
+    "scratch_run_dirs",
     "update_latest_finished",
 ]
 
 #: The link in an experiment directory that points at the last completed run.
 LATEST_FINISHED = "latest_finished"
+#: The subtree reserved for runs that must not enter the aggregation repository.
+SCRATCH_DIR = "_scratch"
 
 #: Held while `latest_finished` is compared and replaced.
 LINK_MUTEX = ".latest_finished.mutex"
@@ -122,14 +126,26 @@ class _LinkMutex:
 
 def run_dirs(results_root: Path) -> list[Path]:
     """Every run directory under `results_root`, at any nesting depth."""
+    return _run_dirs_below(Path(results_root), exclude_scratch=True)
+
+
+def scratch_run_dirs(results_root: Path) -> list[Path]:
+    """Every scratch run directory below `<results_root>/_scratch`."""
+    return _run_dirs_below(Path(results_root) / SCRATCH_DIR, exclude_scratch=False)
+
+
+def _run_dirs_below(results_root: Path, *, exclude_scratch: bool) -> list[Path]:
     results_root = Path(results_root)
     if not results_root.is_dir():
         return []
     out: list[Path] = []
     stack = [results_root]
     while stack:
-        for entry in stack.pop().iterdir():
+        parent = stack.pop()
+        for entry in parent.iterdir():
             if not entry.is_dir() or entry.is_symlink():
+                continue
+            if exclude_scratch and parent == results_root and entry.name == SCRATCH_DIR:
                 continue
             if is_run_dir(entry):
                 out.append(entry)

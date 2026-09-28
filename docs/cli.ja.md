@@ -14,6 +14,7 @@ runvault verify   run ディレクトリを，ファイルをまたぐ不変条�
 runvault gc       プロセスが kill された run を，記録済みの失敗に変える
 runvault legacy   本仕様より前に書かれた run ディレクトリを読む
 runvault sync     各 run の軽い側を集約リポジトリへコピーする
+runvault delete   明示的に選んだ run に墓標を残して削除する
 runvault query    インデックスを再構築する，SQL を実行する，あるいは両方
 runvault report   ダッシュボード用にインデックスを要約する
 ```
@@ -23,6 +24,7 @@ runvault report   ダッシュボード用にインデックスを要約する
 | | |
 | --- | --- |
 | `runvault path --experiment E --latest` | 最後に完了した run |
+| `runvault path --experiment E --latest --scratch` | 最後に完了した scratch run |
 | `runvault path --experiment E --config-hash 9f2c41ab` | ある条件のすべての run |
 | `runvault path --experiment E --execution-hash 3b1d --finished` | この全く同じものは既に実行済みか |
 | `runvault path --experiment E --latest --subcommand run` | あるサブコマンドの最新の run |
@@ -33,6 +35,8 @@ runvault report   ダッシュボード用にインデックスを要約する
 | `runvault gc` | プロセスが kill された run を記録する |
 | `runvault sync --repo-id R --vault V --dry-run` | 集約リポジトリが受け取る内容 |
 | `runvault sync --repo-id R --vault V` | 各 run の軽い側をそこへコピーする |
+| `runvault delete --repo-id R --vault V --run-uid U --reason TEXT` | 1 run の削除を下見する |
+| `runvault delete --repo-id R --vault V --run-uid U --reason TEXT --yes` | 墓標を残して削除する |
 | `runvault query --vault V --refresh` | そのリポジトリから `index/*.parquet` を再構築する |
 | `runvault query --vault V "SELECT …"` | 全リポジトリ横断で問い合わせる |
 | `runvault report --obsidian --vault V -o runs.json` | ダッシュボード用にインデックスを要約する |
@@ -46,6 +50,7 @@ run ディレクトリを出力する．
 | --- | --- |
 | `--experiment <EXPERIMENT>` | 探す experiment（必須） |
 | `--results-root <RESULTS_ROOT>` | experiment ディレクトリの置き場所（既定 `results`） |
+| `--scratch` | 本番ツリーではなく `<results-root>/_scratch` を探す |
 | `--latest` | `latest_finished` リンクを解決する |
 | `--config-hash <CONFIG_HASH>` | `config_hash` がこの接頭辞で始まる run すべて —— 同じ条件 |
 | `--execution-hash <EXECUTION_HASH>` | `execution_hash` がこの接頭辞で始まる run すべて |
@@ -98,6 +103,21 @@ runvault sync --repo-id <REPO_ID> --vault <VAULT> [--dry-run] [--allow-internal]
 | `--allow-internal` | public を宣言していない run も送る |
 
 何がコピーされ，コピー先が何を宣言していなければならないかは [保全](preservation.ja.md) を参照．
+
+`results/_scratch/` の scratch run は決して送らない．通常実行でも `--dry-run` でも，その件数を表示する．本番 run の `run_uid` が `<vault>/<repo_id>/_deleted.jsonl` にあれば，`削除済みのため送らない: <slug>` と表示し，終了コードを変えずにその run を飛ばす．
+
+## `delete`
+
+```bash
+runvault delete --repo-id <REPO_ID> --vault <VAULT> \
+  --run-uid <RUN_UID> [--run-uid <RUN_UID> ...] --reason <TEXT> [--yes]
+runvault delete --repo-id <REPO_ID> --vault <VAULT> \
+  --experiment <EXPERIMENT> --failed --reason <TEXT> [--yes]
+```
+
+既定は下見である．安定 id・slug・元と集約先の有無を列挙し，ファイルツリーは変えない．`--yes` を付けると，最初に墓標を書き，次に集約先のコピーと `by-slug` リンクを消し，最後に元を消す．`--reason` は必須である．既定で対象にできるのは失敗 run で，成功 run（`state = finished`）には `--include-succeeded` も要る．実行中の run，`runvault gc` がまだ必要な stale lock，`run.json` の無い legacy run は拒否する．指定方法は繰り返し可能な `--run-uid`，または `--experiment … --failed` であり，slug は指定に使えない．
+
+`--results-root`，`--vault`，`--repo-id` の意味と既定は `sync` と同じで，`runvault-vault.toml` の探索規則も共有する．このコマンドは索引やダッシュボードを再構築せず，削除後に `runvault query --refresh` と `runvault report --obsidian` を案内する．
 
 ## `query`
 

@@ -13,6 +13,9 @@ use crate::status::RunStatus;
 /// The link in an experiment directory that points at the last completed run.
 pub const LATEST_FINISHED: &str = "latest_finished";
 
+/// The subtree reserved for runs that must not enter the aggregation repository.
+pub const SCRATCH_DIR: &str = "_scratch";
+
 /// Held while `latest_finished` is compared and replaced.
 const LINK_MUTEX: &str = ".latest_finished.mutex";
 
@@ -163,6 +166,15 @@ fn read_link_status(link: &Path) -> Result<Option<RunStatus>> {
 /// A directory counts as a run when it holds `run.json`, `status.json` or the
 /// lock: that also finds the legacy layouts, which have no `run.json`.
 pub fn run_dirs(results_root: &Path) -> Result<Vec<PathBuf>> {
+    run_dirs_below(results_root, true)
+}
+
+/// Every scratch run directory below `<results_root>/_scratch`.
+pub fn scratch_run_dirs(results_root: &Path) -> Result<Vec<PathBuf>> {
+    run_dirs_below(&results_root.join(SCRATCH_DIR), false)
+}
+
+fn run_dirs_below(results_root: &Path, exclude_scratch: bool) -> Result<Vec<PathBuf>> {
     let mut out = Vec::new();
     if !results_root.is_dir() {
         return Ok(out);
@@ -174,6 +186,9 @@ pub fn run_dirs(results_root: &Path) -> Result<Vec<PathBuf>> {
             let entry = entry.map_err(|e| Error::io(&dir, e))?;
             let path = entry.path();
             if !entry.file_type().map_err(|e| Error::io(&path, e))?.is_dir() {
+                continue;
+            }
+            if exclude_scratch && dir == results_root && entry.file_name() == SCRATCH_DIR {
                 continue;
             }
             if is_run_dir(&path) {

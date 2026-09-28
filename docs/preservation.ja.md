@@ -34,6 +34,16 @@ visibility     = "private"
 
 public を宣言していない run を送るには `--allow-internal`（またはコピー先の `allow_internal = true`）が要る．`verify --deep` に通らない run はそもそも送られない．
 
+scratch run は件数を数えるが，コピーしない．`run_uid` が既に `<vault>/<repo_id>/_deleted.jsonl` にある正規 run も飛ばす．この墓標判定は通常実行と `--dry-run` の両方に適用し，エラーにはしない．
+
+## `delete`：唯一の破壊的操作
+
+`runvault delete` は，記録済みの run を意図的に取り除く runvault 唯一のコマンドである．既定は下見で，対象の明示と `--reason` を必須とし，`--yes` があるときだけファイルを変える．処理順は墓標，集約先のコピー，元のコピーである．途中停止後に同じコマンドを繰り返せば安全に残りを完了し，既に無い側は報告して飛ばす．
+
+追記専用の墓標は `<vault>/<repo_id>/_deleted.jsonl` に置く．別のマシンに元のコピーが残っていても，再び送られることを防ぐ．墓標は削除した事実の記録であって，安全に消し去る仕組みではない．集約 vault は Git 管理されるので，削除した run の中身は Git 履歴に残る．機微データを履歴から除くには，別途履歴を書き換える必要がある．
+
+削除は派生した索引やダッシュボードを再構築しない．これらへ反映するときは `runvault query --refresh` と `runvault report --obsidian` を実行する．
+
 ## `query`
 
 ```bash

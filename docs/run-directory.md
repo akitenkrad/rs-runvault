@@ -24,6 +24,18 @@ it is authoritative.
 `latest_finished` symlink to the last run that completed, and a run in progress
 carries a `.runvault.lock`.
 
+`RunOptions::scratch(true)` changes only the location to
+`<results_root>/_scratch/<experiment>/<run_slug>/`. Scratch is not part of the
+run's identity: its slug and hashes are computed exactly as for a production
+run, and moving the directory into the production experiment tree promotes it
+to the next `sync`. The experiment name `_scratch` is reserved so these two
+trees cannot be confused.
+
+A code-origin production run created from a dirty Git worktree emits a warning
+to standard error. Scratch runs, clean worktrees, and runs without code
+provenance do not. During development, set `RunOptions::scratch(true)` rather
+than leaving trial runs in the production tree.
+
 ## The files
 
 ### `run.json`

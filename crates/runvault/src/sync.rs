@@ -341,6 +341,34 @@ pub struct SyncOptions {
     pub compress_over_bytes: u64,
 }
 
+/// Counts of local runs that a sync deliberately does not hide in its log.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LocalSummary {
+    /// Runs and legacy-shaped fragments below `_scratch`.
+    pub scratch_runs: usize,
+    /// Canonical production runs recorded from a dirty git worktree.
+    pub dirty_production_runs: usize,
+}
+
+/// Summarizes local-only scratch runs and dirty production runs.
+pub fn local_summary(results_root: &Path) -> Result<LocalSummary> {
+    let scratch_root = results_root.join(crate::paths::SCRATCH_DIR);
+    let mut scratch = std::collections::BTreeSet::new();
+    scratch.extend(crate::paths::scratch_run_dirs(results_root)?);
+    scratch.extend(legacy::find_run_dirs(&scratch_root)?);
+
+    let dirty_production_runs = crate::paths::run_dirs(results_root)?
+        .into_iter()
+        .filter_map(|dir| files::read_json::<RunMeta>(&dir.join("run.json")).ok())
+        .filter(|meta| meta.code.as_ref().is_some_and(|code| code.git_dirty))
+        .count();
+
+    Ok(LocalSummary {
+        scratch_runs: scratch.len(),
+        dirty_production_runs,
+    })
+}
+
 /// Plans every run under `results_root`, canonical and legacy alike.
 ///
 /// The two kinds are found by different scanners and cannot overlap: a
@@ -352,8 +380,17 @@ pub fn plan_all(
     options: &SyncOptions,
 ) -> Result<Vec<Planned>> {
     let mut out = Vec::new();
+    let deleted = crate::delete::run_uids(vault_root, repo_id)?;
     for dir in crate::paths::run_dirs(results_root)? {
         if dir.join("run.json").is_file() {
+            let meta: RunMeta = files::read_json(&dir.join("run.json"))?;
+            if meta.repo_id == repo_id && deleted.contains(&meta.run_uid) {
+                out.push(Planned::Skipped {
+                    run_dir: dir,
+                    reason: format!("削除済みのため送らない: {}", meta.run_slug),
+                });
+                continue;
+            }
             out.push(plan_canonical(&dir, repo_id, vault_root, options)?);
         }
     }

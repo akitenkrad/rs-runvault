@@ -44,6 +44,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     git(&repo, &["config", "user.name", "fixture"])?;
     std::fs::write(repo.join("Cargo.lock"), "# lock\n")?;
     std::fs::write(repo.join("uv.lock"), "version = 1\n")?;
+    std::fs::write(repo.join("runvault.toml"), "require_docs = false\n")?;
     git(&repo, &["add", "-A"])?;
     git(&repo, &["commit", "-qm", "fixture"])?;
 
@@ -53,13 +54,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "output_dir": "results/whatever"
     });
 
+    write_run(&repo, &cfg, false)?;
+    let dir = write_run(&repo, &cfg, true)?;
+
+    // The .git directory and declaration are generator scaffolding, not part
+    // of either committed run fixture.
+    std::fs::remove_dir_all(repo.join(".git"))?;
+    std::fs::remove_file(repo.join("runvault.toml"))?;
+    println!("wrote fixtures, including {}", dir.display());
+    Ok(())
+}
+
+fn write_run(
+    repo: &Path,
+    cfg: &serde_json::Value,
+    scratch: bool,
+) -> Result<PathBuf, Box<dyn std::error::Error>> {
     let mut run = Run::start(
         RunOptions::new("schelling", "main")
             .repo_id("runvault-fixture")
             .domain("simulation")
             .results_root(repo.join("results"))
-            .repo_root(&repo)
-            .parameters(&cfg)?
+            .scratch(scratch)
+            .repo_root(repo)
+            .parameters(cfg)?
             .hash_exclude(["/output_dir", "/log_level"])
             .seed_pointers(["/seed"])
             .invariant_to(["/threads"])
@@ -105,11 +123,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "outcome": "settled", "censored": false, "budget": 100}),
     )?;
     run.finish()?;
-
-    // The .git directory is the generator's scaffolding, not part of the run.
-    std::fs::remove_dir_all(repo.join(".git"))?;
-    println!("wrote {}", dir.display());
-    Ok(())
+    Ok(dir)
 }
 
 fn git(repo: &Path, args: &[&str]) -> Result<(), Box<dyn std::error::Error>> {

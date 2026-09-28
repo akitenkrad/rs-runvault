@@ -167,6 +167,12 @@ fn status_json_matches_the_types_that_write_it() {
     );
 }
 
+#[test]
+fn tombstone_json_matches_the_type_that_writes_it() {
+    let tombstone = load("tombstone.json");
+    assert_parity::<runvault::delete::Tombstone>("tombstone.json", &tombstone);
+}
+
 /// The string values an enumeration allows, however the schema spells it.
 ///
 /// A hand-written schema uses `enum`; `schemars` emits `oneOf` of `const`s.

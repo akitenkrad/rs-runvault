@@ -20,6 +20,7 @@ implementation read them, and CI fails when either drifts.
 | `event.json` | A line of `events.jsonl` |
 | `status.json` | `status.json` |
 | `sync.json` | The receipt left in a synced run directory |
+| `tombstone.json` | One append-only line in `<vault>/<repo_id>/_deleted.jsonl` |
 | `vault.config.json` | `runvault-vault.toml`, the aggregation repository's declaration |
 | `index.columns.json` | The flattened columns of the nine parquet tables |
 | `index.columns.meta.json` | The meta-schema that keeps `index.columns.json` well formed |

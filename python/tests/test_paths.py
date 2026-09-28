@@ -50,6 +50,13 @@ def test_runs_are_found_under_a_grouping_directory(tmp_path: Path) -> None:
     assert len(paths.run_dirs(tmp_path)) == 2
 
 
+def test_the_default_scan_excludes_the_scratch_tree(tmp_path: Path) -> None:
+    finished(tmp_path / "schelling/main_1", "2026-08-30T10:00:00+09:00")
+    finished(tmp_path / "_scratch/schelling/main_2", "2026-08-30T10:00:00+09:00")
+    assert paths.run_dirs(tmp_path) == [tmp_path / "schelling/main_1"]
+    assert paths.scratch_run_dirs(tmp_path) == [tmp_path / "_scratch/schelling/main_2"]
+
+
 def test_a_missing_results_root_yields_nothing(tmp_path: Path) -> None:
     assert paths.run_dirs(tmp_path / "nope") == []
 

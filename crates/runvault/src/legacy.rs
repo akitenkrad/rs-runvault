@@ -232,6 +232,9 @@ pub fn find_run_dirs(results_root: &Path) -> Result<Vec<PathBuf>> {
                 continue;
             }
             let name = entry.file_name().to_string_lossy().to_string();
+            if dir == results_root && name == crate::paths::SCRATCH_DIR {
+                continue;
+            }
             if name.starts_with('.') {
                 continue;
             }

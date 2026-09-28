@@ -70,6 +70,12 @@ SYNC = {
                "stored": {"hash": {"algorithm": "blake3", "value": HEX64}, "bytes": 1_000_000}}],
 }
 VAULT = {"schema_version": "1.0", "visibility": "private", "compress_over_mib": 10}
+TOMBSTONE = {
+    "schema_version": "1.0", "run_uid": UID, "repo_id": "ssr",
+    "experiment": "p00000009-schelling", "run_slug": SLUG,
+    "state": "failed", "deleted_at": TS, "host": "mbp",
+    "reason": "開発中の試行", "runvault_version": "0.1.0",
+}
 
 # 同じスキーマが runvault.toml (宣言) と metrics.meta.json (run に写したもの) の両方を受ける (設計書 §3.11)
 METRIC_DECL = {
@@ -313,6 +319,12 @@ def main() -> int:
          mutate(SYNC, files=[{**SYNC["files"][0], "compression": "none"}]), "stored_path"),
         ("sync: 元と保存後の両方のハッシュが要る", "sync", None,
          mutate(SYNC, files=[{k: v for k, v in SYNC["files"][0].items() if k != "stored"}]), "stored"),
+
+        ("tombstone: 正例", "tombstone", None, TOMBSTONE, True),
+        ("tombstone: reason は必須", "tombstone", None,
+         mutate(TOMBSTONE, reason=...), "reason"),
+        ("tombstone: 未知キーは許さない", "tombstone", None,
+         {**TOMBSTONE, "erased": True}, "erased"),
 
         ("vault: 正例", "vault.config", None, VAULT, True),
         ("vault: public は許さない", "vault.config", None, mutate(VAULT, visibility="public"), "visibility"),

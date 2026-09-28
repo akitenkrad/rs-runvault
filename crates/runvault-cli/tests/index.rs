@@ -167,6 +167,24 @@ fn the_index_holds_both_kinds_of_run_under_one_key() {
 }
 
 #[test]
+fn the_tombstone_jsonl_is_not_mistaken_for_a_synced_run() {
+    let results = tempfile::tempdir().unwrap();
+    let vault = private_vault();
+    replication_run(results.path(), 42, 0.83);
+    sync_all(results.path(), vault.path());
+    let repo = vault.path().join(REPO_ID);
+    std::fs::write(
+        repo.join(runvault::delete::TOMBSTONES),
+        "{\"this\":\"is not a sync receipt\"}\n",
+    )
+    .unwrap();
+
+    let (ok, stdout) = query(vault.path(), &["--refresh"]);
+    assert!(ok, "{stdout}");
+    assert!(stdout.contains("runs\t1 行"), "{stdout}");
+}
+
+#[test]
 fn a_legacy_run_contributes_its_metrics_without_a_run_uid() {
     let results = tempfile::tempdir().unwrap();
     let vault = private_vault();

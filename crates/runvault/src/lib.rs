@@ -31,6 +31,7 @@
 
 pub mod canonical;
 pub mod config;
+pub mod delete;
 pub mod env;
 pub mod error;
 pub mod files;

@@ -128,6 +128,7 @@ class RunOptions:
     ext: Mapping[str, Any] | None = None
     cli_args: Sequence[str] | None = None
     python_version: str | None = None
+    scratch: bool = False
 
     def control(self) -> dict[str, Any]:
         """The `runvault` block of `config.json`."""
@@ -145,6 +146,8 @@ class RunOptions:
             raise SpecError("repo_id is required")
         if self.domain is None:
             raise SpecError("domain is required")
+        if self.experiment == paths.SCRATCH_DIR:
+            raise SpecError("the experiment name '_scratch' is reserved")
         for name, value in (
             ("repo_id", self.repo_id),
             ("experiment", self.experiment),
@@ -235,7 +238,12 @@ class Run:
         )
 
         run_uid = ids.new_run_uid(now)
-        self._experiment_dir = paths.experiment_dir(options.results_root, options.experiment)
+        experiment_root = (
+            Path(options.results_root) / paths.SCRATCH_DIR
+            if options.scratch
+            else Path(options.results_root)
+        )
+        self._experiment_dir = paths.experiment_dir(experiment_root, options.experiment)
         directory, slug, collision_index = _create_run_dir(
             self._experiment_dir,
             options.subcommand,
@@ -306,6 +314,13 @@ class Run:
             _record_failed_start(directory, run_uid, now, collision_index, error)
             raise
         atexit.register(self._on_interpreter_exit)
+        if not options.scratch and code is not None and code["git_dirty"]:
+            print(
+                f"runvault: 未コミットの変更がある状態で本番の run を作りました ({slug})．\n"
+                "          開発中の試行なら --scratch を付けてください．"
+                "この run は集約先へ送られます．",
+                file=sys.stderr,
+            )
 
     @classmethod
     def start(cls, experiment: str, subcommand: str, **options: Any) -> Run:

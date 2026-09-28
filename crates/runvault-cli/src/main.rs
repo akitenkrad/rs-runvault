@@ -11,7 +11,7 @@ mod audit;
 mod index;
 mod report;
 
-use clap::{Args, Parser, Subcommand};
+use clap::{ArgGroup, Args, Parser, Subcommand};
 use runvault::gc::Outcome;
 use runvault::meta::RunMeta;
 use runvault::{Result, files, paths, sync, verify};
@@ -46,6 +46,8 @@ enum Command {
     Legacy(LegacyArgs),
     /// Copy the light half of every run to the aggregation repository.
     Sync(SyncArgs),
+    /// Delete selected recorded runs after writing an append-only tombstone.
+    Delete(DeleteArgs),
     /// Rebuild the index, run SQL against it, or both.
     Query(QueryArgs),
     /// Summarize the index for the Obsidian dashboard.
@@ -87,6 +89,9 @@ struct PathArgs {
     /// Where the experiment directories live.
     #[arg(long, default_value = "results")]
     results_root: PathBuf,
+    /// Look below `<results-root>/_scratch` instead of the production tree.
+    #[arg(long)]
+    scratch: bool,
     /// Resolve the `latest_finished` link.
     #[arg(long, conflicts_with_all = ["config_hash", "execution_hash"])]
     latest: bool,
@@ -168,6 +173,42 @@ struct SyncArgs {
 }
 
 #[derive(Args)]
+#[command(group(
+    ArgGroup::new("selection")
+        .required(true)
+        .args(["run_uid", "experiment"])
+))]
+struct DeleteArgs {
+    /// Where the experiment directories live.
+    #[arg(long, default_value = "results")]
+    results_root: PathBuf,
+    /// The stable repository id, with the same meaning as for `sync`.
+    #[arg(long)]
+    repo_id: String,
+    /// The aggregation repository, discovered by the same rule as for `sync`.
+    #[arg(long)]
+    vault: Option<PathBuf>,
+    /// Stable run identifier. May be repeated; slugs are not accepted.
+    #[arg(long, value_name = "RUN_UID", conflicts_with = "experiment")]
+    run_uid: Vec<String>,
+    /// Select failed runs in this experiment.
+    #[arg(long, requires = "failed", conflicts_with = "run_uid")]
+    experiment: Option<String>,
+    /// Select every failed run in `--experiment`.
+    #[arg(long, requires = "experiment")]
+    failed: bool,
+    /// Why these runs are being deleted. Written into the tombstone.
+    #[arg(long)]
+    reason: Option<String>,
+    /// Perform the deletion. Without this flag the command only previews.
+    #[arg(long)]
+    yes: bool,
+    /// Also permit successful (`state = finished`) runs.
+    #[arg(long)]
+    include_succeeded: bool,
+}
+
+#[derive(Args)]
 struct QueryArgs {
     /// The SQL to run. The table files are `index/<name>.parquet`.
     sql: Option<String>,
@@ -210,6 +251,7 @@ fn main() -> ExitCode {
         Command::Gc(args) => cmd_gc(&args),
         Command::Legacy(args) => cmd_legacy(&args),
         Command::Sync(args) => cmd_sync(&args),
+        Command::Delete(args) => cmd_delete(&args),
         Command::Query(args) => cmd_query(&args),
         Command::Report(args) => cmd_report(&args),
         Command::Metrics(args) => match &args.command {
@@ -226,7 +268,16 @@ fn main() -> ExitCode {
 }
 
 fn cmd_path(args: &PathArgs) -> Result<ExitCode> {
-    let experiment_dir = paths::experiment_dir(&args.results_root, &args.experiment);
+    if !args.scratch && args.experiment == paths::SCRATCH_DIR {
+        eprintln!("runvault: scratch run を探すには --scratch と実験名を指定してください");
+        return Ok(ExitCode::FAILURE);
+    }
+    let root = if args.scratch {
+        args.results_root.join(paths::SCRATCH_DIR)
+    } else {
+        args.results_root.clone()
+    };
+    let experiment_dir = paths::experiment_dir(&root, &args.experiment);
 
     let selected = select_runs(&experiment_dir, args)?;
 
@@ -453,11 +504,16 @@ fn default_vault() -> PathBuf {
     PathBuf::from(home).join("research").join("runs")
 }
 
+fn configured_vault(requested: &Option<PathBuf>) -> Result<(PathBuf, PathBuf, sync::VaultConfig)> {
+    let vault = requested.clone().unwrap_or_else(default_vault);
+    let (declared_at, config) = sync::load_vault_config(&vault)?;
+    Ok((vault, declared_at, config))
+}
+
 fn cmd_sync(args: &SyncArgs) -> Result<ExitCode> {
-    let vault = args.vault.clone().unwrap_or_else(default_vault);
+    let (vault, declared_at, config) = configured_vault(&args.vault)?;
     // Reading the declaration first means a destination that never said it was
     // private stops the command before it has looked at a single run.
-    let (declared_at, config) = sync::load_vault_config(&vault)?;
     println!(
         "集約先 {} ({} が宣言，{} MiB 超は zstd)",
         vault.display(),
@@ -469,6 +525,9 @@ fn cmd_sync(args: &SyncArgs) -> Result<ExitCode> {
         allow_internal: args.allow_internal || config.allow_internal,
         compress_over_bytes: config.compress_over_bytes(),
     };
+    let summary = sync::local_summary(&args.results_root)?;
+    println!("scratch {} 件（送らない）", summary.scratch_runs);
+    println!("dirty な本番 run: {} 件", summary.dirty_production_runs);
     let planned = sync::plan_all(&args.results_root, &args.repo_id, &vault, &options)?;
 
     let (mut sent, mut bytes, mut unverified) = (0u64, 0u64, 0u64);
@@ -478,7 +537,11 @@ fn cmd_sync(args: &SyncArgs) -> Result<ExitCode> {
                 if reason.starts_with("verify") {
                     unverified += 1;
                 }
-                println!("skip\t{}\t{reason}", relative_to_cwd(run_dir).display());
+                if reason.starts_with("削除済みのため送らない:") {
+                    println!("{reason}");
+                } else {
+                    println!("skip\t{}\t{reason}", relative_to_cwd(run_dir).display());
+                }
             }
             sync::Planned::Send(plan) => {
                 sent += 1;
@@ -531,6 +594,60 @@ fn cmd_sync(args: &SyncArgs) -> Result<ExitCode> {
     } else {
         ExitCode::SUCCESS
     })
+}
+
+fn cmd_delete(args: &DeleteArgs) -> Result<ExitCode> {
+    let reason = args
+        .reason
+        .as_deref()
+        .ok_or_else(|| runvault::Error::Spec("--reason は必須です".into()))?;
+    let (vault, _, _) = configured_vault(&args.vault)?;
+    let selection = match &args.experiment {
+        Some(experiment) => runvault::delete::Selection::FailedExperiment(experiment.clone()),
+        None => runvault::delete::Selection::RunUids(args.run_uid.clone()),
+    };
+    let plans = runvault::delete::plan(
+        &args.results_root,
+        &vault,
+        &args.repo_id,
+        selection,
+        reason,
+        args.include_succeeded,
+    )?;
+
+    if plans.is_empty() {
+        println!("削除対象はありません");
+        return Ok(ExitCode::SUCCESS);
+    }
+    println!("{} 件の削除対象:", plans.len());
+    for plan in &plans {
+        let source = if plan.source_dir.is_some() {
+            "ある"
+        } else {
+            "無い"
+        };
+        let vault_copy = if plan.vault_dir.is_some() {
+            "ある"
+        } else {
+            "無い"
+        };
+        println!(
+            "{}\t{}\t元: {}\t集約先: {}",
+            plan.run_uid, plan.run_slug, source, vault_copy
+        );
+    }
+    if !args.yes {
+        println!("--yes が無いため，下見だけで終了します");
+        return Ok(ExitCode::SUCCESS);
+    }
+
+    for plan in &plans {
+        runvault::delete::execute(plan)?;
+        println!("削除しました: {} ({})", plan.run_uid, plan.run_slug);
+    }
+    println!("索引を更新するには `runvault query --refresh` を実行してください");
+    println!("ダッシュボードを更新するには `runvault report --obsidian` を実行してください");
+    Ok(ExitCode::SUCCESS)
 }
 
 fn cmd_report(args: &ReportArgs) -> Result<ExitCode> {

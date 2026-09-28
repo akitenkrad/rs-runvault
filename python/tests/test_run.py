@@ -80,6 +80,31 @@ def test_the_directory_name_carries_the_two_hashes(results: Path) -> None:
     assert meta["execution_hash"].startswith(exec4)
 
 
+def test_scratch_changes_only_the_run_location_not_its_identity(
+    results: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(run_module.ids, "timestamp_part", lambda now: "20260830_101500")
+    common = {"origin": "manual", "parameters": {"n": 3}}
+    production = start(results, **common)
+    scratch = start(results, scratch=True, **common)
+
+    assert production.dir.parent == results / "schelling"
+    assert scratch.dir.parent == results / "_scratch" / "schelling"
+    assert production.run_slug == scratch.run_slug
+    assert production.meta["config_hash"] == scratch.meta["config_hash"]
+    assert production.meta["execution_hash"] == scratch.meta["execution_hash"]
+    assert production.meta["env"]["env_hash"] == scratch.meta["env"]["env_hash"]
+
+    production.finish()
+    scratch.finish()
+
+
+def test_the_scratch_experiment_name_is_reserved(results: Path) -> None:
+    with pytest.raises(SpecError, match="reserved"):
+        start(results, experiment="_scratch", origin="manual")
+    assert not (results / "_scratch").exists()
+
+
 def test_origin_and_visibility_are_always_written(results: Path) -> None:
     meta = read_json(start(results).finish() / "run.json")
     assert meta["origin"] == "code"
@@ -327,6 +352,39 @@ def test_a_dirty_working_tree_is_recorded_with_the_hash_of_its_diff(
     assert code["git_dirty"]
     assert len(code["dirty_hash"]["value"]) == 64
     assert len(code["git_commit"]) == 40
+
+
+def test_only_a_dirty_production_run_warns_on_standard_error(
+    results: Path, repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (repo / "a.txt").write_text("two", encoding="utf-8")
+    production = start(results)
+    warning = capsys.readouterr().err
+    assert warning == (
+        f"runvault: 未コミットの変更がある状態で本番の run を作りました "
+        f"({production.run_slug})．\n"
+        "          開発中の試行なら --scratch を付けてください．"
+        "この run は集約先へ送られます．\n"
+    )
+    production.fail("test", "done")
+
+
+@pytest.mark.parametrize(
+    "overrides,dirty",
+    [({"scratch": True}, True), ({}, False), ({"origin": "manual"}, True)],
+)
+def test_scratch_clean_and_codeless_runs_do_not_warn(
+    results: Path,
+    repo: Path,
+    capsys: pytest.CaptureFixture[str],
+    overrides: dict[str, Any],
+    dirty: bool,
+) -> None:
+    if dirty:
+        (repo / "a.txt").write_text("two", encoding="utf-8")
+    run = start(results, **overrides)
+    assert capsys.readouterr().err == ""
+    run.fail("test", "done")
 
 
 def test_a_lock_file_is_copied_into_the_run_and_hashed(results: Path, repo: Path) -> None:
